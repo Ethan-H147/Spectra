@@ -1,0 +1,12 @@
+# Ignore the compiled executable
+my_program
+my_program.exe
+
+# Ignore VS Code settings folders (optional, but good practice)
+.vscode/
+
+# Ignore object files (intermediate compile steps)
+*.o
+
+# Ignore large media files (we don't want to upload copyrighted Star Wars music!)
+*.wav
