@@ -1,0 +1,10 @@
+^C:\USERS\HUYUS\PROJECTS\C-SPECTRA\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/huyus/Projects/C-Spectra -BC:/Users/huyus/Projects/C-Spectra/build-windows --check-stamp-file C:/Users/huyus/Projects/C-Spectra/build-windows/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

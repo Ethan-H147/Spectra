@@ -1,0 +1,62 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(SpectraDesktop C)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+file(GLOB_RECURSE SPECTRA_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
+)
+
+add_executable(spectra_desktop ${SPECTRA_SOURCES})
+target_include_directories(spectra_desktop PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+option(
+    SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL
+    "Drive buffer swapping, event polling, and frame pacing for Raylib builds with custom frame control enabled"
+    ${WIN32}
+)
+if(SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL)
+    target_compile_definitions(spectra_desktop PRIVATE SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL=1)
+endif()
+
+if(MSVC)
+    target_compile_options(spectra_desktop PRIVATE /W4)
+else()
+    target_compile_options(spectra_desktop PRIVATE -Wall -Wextra)
+endif()
+
+find_package(raylib CONFIG QUIET)
+if(raylib_FOUND)
+    target_link_libraries(spectra_desktop PRIVATE raylib)
+else()
+    find_package(raylib REQUIRED)
+    target_link_libraries(spectra_desktop PRIVATE raylib)
+endif()
+
+if(WIN32)
+    target_link_libraries(spectra_desktop PRIVATE winmm)
+elseif(UNIX AND NOT APPLE)
+    target_link_libraries(spectra_desktop PRIVATE m)
+endif()
+
+file(GLOB_RECURSE SPECTRA_DSP_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/*.c"
+)
+
+add_executable(dsp_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/dsp_tests.c"
+    ${SPECTRA_DSP_SOURCES}
+)
+target_include_directories(dsp_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+if(WIN32)
+    target_link_libraries(dsp_tests PRIVATE winmm)
+elseif(UNIX AND NOT APPLE)
+    target_link_libraries(dsp_tests PRIVATE m)
+endif()
+
+enable_testing()
+add_test(NAME dsp_tests COMMAND dsp_tests)

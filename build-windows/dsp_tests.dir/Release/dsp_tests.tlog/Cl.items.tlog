@@ -1,0 +1,7 @@
+C:\Users\huyus\Projects\C-Spectra\tests\dsp_tests.c;C:\Users\huyus\Projects\C-Spectra\build-windows\dsp_tests.dir\Release\dsp_tests.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\additive_synth.c;C:\Users\huyus\Projects\C-Spectra\build-windows\dsp_tests.dir\Release\additive_synth.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\dsp_types.c;C:\Users\huyus\Projects\C-Spectra\build-windows\dsp_tests.dir\Release\dsp_types.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\fft.c;C:\Users\huyus\Projects\C-Spectra\build-windows\dsp_tests.dir\Release\fft.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\harmonic_analysis.c;C:\Users\huyus\Projects\C-Spectra\build-windows\dsp_tests.dir\Release\harmonic_analysis.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\signal_utils.c;C:\Users\huyus\Projects\C-Spectra\build-windows\dsp_tests.dir\Release\signal_utils.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\windowing.c;C:\Users\huyus\Projects\C-Spectra\build-windows\dsp_tests.dir\Release\windowing.obj

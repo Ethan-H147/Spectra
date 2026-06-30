@@ -1,0 +1,10 @@
+C:\Users\huyus\Projects\C-Spectra\src\audio\audio_engine.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\audio_engine.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\additive_synth.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\additive_synth.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\dsp_types.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\dsp_types.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\fft.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\fft.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\harmonic_analysis.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\harmonic_analysis.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\signal_utils.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\signal_utils.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\windowing.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\windowing.obj
+C:\Users\huyus\Projects\C-Spectra\src\main.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\main.obj
+C:\Users\huyus\Projects\C-Spectra\src\ui\theme.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\theme.obj
+C:\Users\huyus\Projects\C-Spectra\src\ui\widgets.c;C:\Users\huyus\Projects\C-Spectra\build-windows\spectra_desktop.dir\Release\widgets.obj

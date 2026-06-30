@@ -1,6 +1,9 @@
-# Ignore the compiled executable
+# Ignore compiled desktop binaries and build output
 my_program
 my_program.exe
+c_spectra
+build/
+dsp_tests
 
 # Ignore VS Code settings folders (optional, but good practice)
 .vscode/
@@ -8,5 +11,5 @@ my_program.exe
 # Ignore object files (intermediate compile steps)
 *.o
 
-# Ignore large media files (we don't want to upload copyrighted Star Wars music!)
+# Ignore large media files (we do not want to commit local audio samples)
 *.wav

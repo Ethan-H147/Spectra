@@ -1,0 +1,5 @@
+C:/Users/huyus/Projects/C-Spectra/build-windows/CMakeFiles/spectra_desktop.dir
+C:/Users/huyus/Projects/C-Spectra/build-windows/CMakeFiles/dsp_tests.dir
+C:/Users/huyus/Projects/C-Spectra/build-windows/CMakeFiles/RUN_TESTS.dir
+C:/Users/huyus/Projects/C-Spectra/build-windows/CMakeFiles/ALL_BUILD.dir
+C:/Users/huyus/Projects/C-Spectra/build-windows/CMakeFiles/ZERO_CHECK.dir

@@ -1,19 +1,33 @@
-# The compiler
 CC = gcc
-
-# The flags (tell it to show warnings)
-CFLAGS = -Wall -std=c99
-
-# The libraries we need to link (Raylib + Linux Graphics)
+CFLAGS = -Wall -Wextra -std=c99 -O2 -Isrc
 LDFLAGS = -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
+TARGET = build/spectra_desktop
 
-# The target (our executable name)
-TARGET = c_spectra
+APP_SRC = src/main.c \
+	$(wildcard src/audio/*.c) \
+	$(wildcard src/dsp/*.c) \
+	$(wildcard src/ui/*.c)
 
-# The rule: "To build the target, compile main.c with these flags"
-$(TARGET): main.c
-	$(CC) $(CFLAGS) main.c -o $(TARGET) $(LDFLAGS)
+DSP_SRC = $(wildcard src/dsp/*.c)
+TEST_TARGET = build/dsp_tests
 
-# Cleanup command
+.PHONY: all run test clean
+
+all: $(TARGET)
+
+$(TARGET): $(APP_SRC)
+	mkdir -p build
+	$(CC) $(CFLAGS) $(APP_SRC) -o $(TARGET) $(LDFLAGS)
+
+run: $(TARGET)
+	./$(TARGET)
+
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+$(TEST_TARGET): tests/dsp_tests.c $(DSP_SRC)
+	mkdir -p build
+	$(CC) $(CFLAGS) tests/dsp_tests.c $(DSP_SRC) -o $(TEST_TARGET) -lm
+
 clean:
-	rm -f $(TARGET)
+	rm -rf build
