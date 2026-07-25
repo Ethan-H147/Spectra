@@ -6,7 +6,7 @@ Spectra explores how musical timbre emerges from harmonic structure. It lets use
 
 ## Current Status
 
-This version is a C + Raylib desktop app implementing Milestones 1 and 2:
+This version is a C + Raylib desktop app implementing Milestones 1 through 3:
 
 - Desktop window built with Raylib
 - Sine wave and additive synthesis generation
@@ -19,9 +19,16 @@ This version is a C + Raylib desktop app implementing Milestones 1 and 2:
 - Desktop waveform drawing
 - FFT-based frequency spectrum drawing
 - Spectral peak detection for the generated tone
+- Sample-based fundamental pitch estimation using YIN-style periodicity detection
+- Musical note, cents offset, and confidence readout for generated tones
+- Professional multi-workspace desktop shell with persistent navigation
+- Overview page mapping the complete generated/uploaded audio pipeline
+- Structured placeholder workspaces for audio analysis, harmonic extraction/resynthesis, and STFT spectrograms
+- Settings page covering application, audio, analysis, and appearance defaults
+- Honest milestone labels that distinguish working DSP from planned features
 - Small DSP test executable
 
-Audio file import, pitch estimation UI, harmonic extraction from samples, additive resynthesis, and spectrogram rendering are planned next milestones.
+Audio file import, harmonic extraction from samples, additive resynthesis, and spectrogram reconstruction are planned next milestones.
 
 ## How It Works
 
@@ -34,7 +41,7 @@ harmonic settings
 -> normalization
 -> Raylib sound buffer
 -> playback
--> waveform and spectrum visualization
+-> waveform, spectrum, peaks, and sample-derived pitch
 ```
 
 Spectra uses the Fourier transform to represent sound as a combination of frequencies. Additive synthesis reverses this idea by summing sine waves at harmonic multiples of a fundamental frequency.
@@ -63,11 +70,15 @@ src/
     fft.h
     harmonic_analysis.c
     harmonic_analysis.h
+    pitch_detection.c
+    pitch_detection.h
     signal_utils.c
     signal_utils.h
     windowing.c
     windowing.h
   ui/
+    app_shell.c
+    app_shell.h
     theme.c
     theme.h
     widgets.c
@@ -131,11 +142,16 @@ cmake --build build-windows --target dsp_tests --config Release
 .\build-windows\Release\dsp_tests.exe
 ```
 
-The tests check sine generation length, Hann window values, additive synthesis normalization, synthetic peak detection, and FFT peak detection for a generated 440 Hz sine wave.
+The tests check sine generation length, Hann window values, additive synthesis normalization, spectral peak detection, FFT output, clean-tone pitch accuracy, missing-fundamental recovery, musical-note mapping, and silence rejection.
 
 ## Controls
 
+- Use the left workspace rail or number keys **1–5** to switch between Overview, Synthesizer, Audio Analysis, Harmonic Lab, and Spectrogram.
+- Open **Settings** with the gear button at the lower-left corner.
+- Adjust interface typography from **90%–140%** with the A− / A+ controls under Settings → Appearance. The redesigned 100% baseline is readable, Spectra starts at 110%, and clicking the percentage resets it.
 - Press **Play tone** or the spacebar to hear the current tone.
+- Resize or maximize the window; the workspace reflows to the live window size while the sidebar stays left and the footer spans the bottom edge.
+- Press **F11** to enter or leave borderless full screen.
 - Use the fundamental, duration, and master gain sliders to shape the generated sound.
 - Select a preset to load a harmonic profile.
 - Adjust harmonic sliders to directly edit timbre.
@@ -150,6 +166,8 @@ The tests check sine generation length, Hann window values, additive synthesis n
 - Additive synthesis
 - ADSR envelope
 - Spectral peak detection
+- YIN-style pitch estimation
+- Cumulative mean normalized difference
 
 ## Limitations
 
@@ -159,14 +177,16 @@ Current limitations:
 
 - The app synthesizes tones but does not yet import user audio.
 - Spectrum analysis uses a single windowed frame, not a streaming STFT.
-- Pitch estimation and harmonic extraction from real audio are not exposed yet.
+- Pitch estimation currently analyzes generated tones; imported-audio analysis and harmonic extraction are not exposed yet.
 - The FFT implementation is intentionally readable and dependency-free, not highly optimized.
 - Spectra does not use AI or machine learning.
 - Spectra does not perfectly identify instruments or timbre.
 
 ## Roadmap
 
-- Milestone 3: add pitch estimation for generated and imported tones.
-- Milestone 4: add desktop file loading for WAV samples and mono conversion.
-- Milestone 5: extract harmonic amplitudes and resynthesize an approximation with additive synthesis.
-- Milestone 6: add STFT spectrogram rendering and polish packaging instructions.
+- Milestone 3 (complete): estimate pitch from generated sample buffers and display frequency, note, cents, and confidence.
+- Milestone 4: load WAV, MP3, OGG, and FLAC audio, provide playback/region selection, and convert analysis data to mono.
+- Milestone 5A: extract true harmonics from pitched sounds and resynthesize an additive approximation.
+- Milestone 5B: reconstruct a selected frame from its strongest Fourier components.
+- Milestone 6: add full-file STFT/inverse-STFT Top-N progressive reconstruction.
+- Milestone 7: add stereo processing, caching, export, performance work, packaging, and final polish.

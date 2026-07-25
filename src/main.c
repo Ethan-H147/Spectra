@@ -2,7 +2,10 @@
 #include "dsp/additive_synth.h"
 #include "dsp/fft.h"
 #include "dsp/harmonic_analysis.h"
+#include "dsp/pitch_detection.h"
 #include "dsp/signal_utils.h"
+#include "platform/windows_app.h"
+#include "ui/app_shell.h"
 #include "ui/widgets.h"
 #include "ui/theme.h"
 
@@ -24,14 +27,36 @@ static void app_draw_text(const char *text, int x, int y, int font_size, Color c
 
 #define DrawText app_draw_text
 
-#define SCREEN_WIDTH 1180
-#define SCREEN_HEIGHT 840
+#define SCREEN_WIDTH 1600
+#define SCREEN_HEIGHT 900
+#define MIN_WINDOW_WIDTH 1100
+#define MIN_WINDOW_HEIGHT 800
 #define SAMPLE_RATE 44100U
 #define HARMONIC_COUNT 16
 #define MAX_PEAKS 12
 #define TARGET_FPS 60.0
 
 static const ADSREnvelope DEFAULT_ENVELOPE = {0.015f, 0.08f, 0.75f, 0.12f};
+
+static void set_spectra_window_icon(void) {
+    const int icon_size = 256;
+    const int point_count = 65;
+    Image icon = GenImageColor(icon_size, icon_size, (Color){250, 250, 250, 255});
+    Vector2 previous = {28.0f, 128.0f};
+
+    for (int i = 1; i < point_count; i++) {
+        float t = (float)i / (float)(point_count - 1);
+        Vector2 current = {
+            28.0f + t * 200.0f,
+            128.0f + sinf(t * 4.0f * PI) * 56.0f,
+        };
+        ImageDrawLineEx(&icon, previous, current, 18, BLACK);
+        previous = current;
+    }
+
+    SetWindowIcon(icon);
+    UnloadImage(icon);
+}
 
 typedef enum {
     PRESET_SINE = 0,
@@ -100,13 +125,13 @@ static SampleBuffer render_tone(float fundamental,
 }
 
 static void draw_waveform(Rectangle bounds, const SampleBuffer *buffer) {
-    DrawRectangleRec(bounds, (Color){246, 248, 249, 255});
-    DrawRectangleLinesEx(bounds, 1, (Color){222, 228, 231, 255});
+    DrawRectangleRounded(bounds, 0.025f, 8, (Color){24, 24, 27, 255});
+    DrawRectangleRoundedLines(bounds, 0.025f, 8, (Color){57, 57, 62, 255});
     DrawLine((int)bounds.x,
              (int)(bounds.y + bounds.height * 0.5f),
              (int)(bounds.x + bounds.width),
              (int)(bounds.y + bounds.height * 0.5f),
-             (Color){198, 207, 211, 255});
+             (Color){66, 66, 72, 255});
 
     if (buffer == NULL || buffer->samples == NULL || buffer->count == 0) {
         return;
@@ -138,7 +163,7 @@ static void draw_waveform(Rectangle bounds, const SampleBuffer *buffer) {
 
         float y_min = bounds.y + (1.0f - min_value) * 0.5f * bounds.height;
         float y_max = bounds.y + (1.0f - max_value) * 0.5f * bounds.height;
-        DrawLine((int)bounds.x + x, (int)y_min, (int)bounds.x + x, (int)y_max, (Color){15, 118, 110, 255});
+        DrawLine((int)bounds.x + x, (int)y_min, (int)bounds.x + x, (int)y_max, (Color){47, 181, 169, 255});
     }
 }
 
@@ -147,32 +172,49 @@ static void draw_spectrum(Rectangle bounds, const Spectrum *spectrum, const Peak
     const float min_db = -90.0f;
     const float max_db = 0.0f;
 
-    DrawRectangleRec(bounds, (Color){246, 248, 249, 255});
-    DrawRectangleLinesEx(bounds, 1, (Color){222, 228, 231, 255});
+    DrawRectangleRounded(bounds, 0.025f, 8, (Color){24, 24, 27, 255});
+    DrawRectangleRoundedLines(bounds, 0.025f, 8, (Color){57, 57, 62, 255});
 
     for (int i = 0; i <= 4; i++) {
         float y = bounds.y + (bounds.height * (float)i / 4.0f);
-        DrawLine((int)bounds.x, (int)y, (int)(bounds.x + bounds.width), (int)y, (Color){225, 231, 234, 255});
+        DrawLine((int)bounds.x, (int)y, (int)(bounds.x + bounds.width), (int)y, (Color){48, 48, 53, 255});
     }
 
     if (spectrum == NULL || spectrum->count == 0) {
         return;
     }
 
+    size_t visible_count = 0;
+    while (visible_count < spectrum->count && spectrum->frequencies[visible_count] <= max_frequency) {
+        visible_count++;
+    }
+    size_t bins_per_point = (visible_count + (size_t)bounds.width - 1U) / (size_t)bounds.width;
+    if (bins_per_point < 1U) {
+        bins_per_point = 1U;
+    }
+
     Vector2 previous = {0};
     bool has_previous = false;
-    for (size_t i = 0; i < spectrum->count; i++) {
-        float frequency = spectrum->frequencies[i];
-        if (frequency > max_frequency) {
-            break;
+    for (size_t start = 0; start < visible_count; start += bins_per_point) {
+        size_t end = start + bins_per_point;
+        if (end > visible_count) {
+            end = visible_count;
         }
 
-        float db = clampf(linear_to_db(spectrum->magnitudes[i]), min_db, max_db);
+        size_t strongest = start;
+        for (size_t i = start + 1U; i < end; i++) {
+            if (spectrum->magnitudes[i] > spectrum->magnitudes[strongest]) {
+                strongest = i;
+            }
+        }
+
+        float frequency = spectrum->frequencies[strongest];
+        float db = clampf(linear_to_db(spectrum->magnitudes[strongest]), min_db, max_db);
         float x = bounds.x + (frequency / max_frequency) * bounds.width;
         float y = bounds.y + bounds.height - ((db - min_db) / (max_db - min_db)) * bounds.height;
         Vector2 current = {x, y};
         if (has_previous) {
-            DrawLineV(previous, current, (Color){37, 99, 235, 255});
+            DrawLineV(previous, current, (Color){62, 145, 242, 255});
         }
         previous = current;
         has_previous = true;
@@ -190,21 +232,61 @@ static void draw_spectrum(Rectangle bounds, const Spectrum *spectrum, const Peak
 }
 
 static void draw_peak_readout(Rectangle bounds, const Peak *peaks, int peak_count) {
-    DrawText("Detected spectral peaks", (int)bounds.x, (int)bounds.y, 18, (Color){26, 34, 36, 255});
-    int shown = peak_count < 6 ? peak_count : 6;
+    theme_draw_heading(g_theme, "Detected peaks", bounds.x, bounds.y, 18.0f, g_theme->text);
+    float rows_y = bounds.y + theme_scaled_size(g_theme, 18.0f) + 8.0f;
+    float row_step = theme_scaled_size(g_theme, 16.0f) + 5.0f;
+    int capacity = (int)((bounds.y + bounds.height - rows_y) / row_step);
+    if (capacity < 1) capacity = 1;
+    if (capacity > 5) capacity = 5;
+    int shown = peak_count < capacity ? peak_count : capacity;
     for (int i = 0; i < shown; i++) {
         char text[96];
         snprintf(text, sizeof(text), "%2d. %7.1f Hz  %6.1f dB", i + 1, peaks[i].frequency, peaks[i].db);
-        DrawText(text, (int)bounds.x, (int)bounds.y + 28 + i * 22, 17, (Color){86, 98, 102, 255});
+        theme_draw_text(g_theme, text, bounds.x, rows_y + (float)i * row_step, 16.0f, g_theme->muted_text);
     }
     if (shown == 0) {
-        DrawText("No peaks above threshold yet.", (int)bounds.x, (int)bounds.y + 28, 17, (Color){86, 98, 102, 255});
+        theme_draw_text(g_theme, "No peaks above threshold yet.", bounds.x, rows_y, 16.0f, g_theme->muted_text);
     }
 }
 
+static void draw_pitch_readout(Rectangle bounds, const PitchEstimate *pitch) {
+    theme_draw_heading(g_theme, "Estimated pitch", bounds.x, bounds.y, 17.0f, g_theme->text);
+    float frequency_y = bounds.y + theme_scaled_size(g_theme, 17.0f) + 7.0f;
+    if (pitch == NULL || !pitch->valid) {
+        theme_draw_heading(g_theme, "No stable pitch", bounds.x, frequency_y, 20.0f, g_theme->muted_text);
+        theme_draw_text(g_theme, "Raise a harmonic above silence.", bounds.x,
+                        frequency_y + theme_scaled_size(g_theme, 20.0f) + 7.0f, 13.0f,
+                        g_theme->muted_text);
+        return;
+    }
+
+    char frequency_text[48];
+    char note_text[64];
+    char confidence_text[48];
+    snprintf(frequency_text, sizeof(frequency_text), "%.2f Hz", pitch->frequency_hz);
+    snprintf(note_text,
+             sizeof(note_text),
+             "%s%d  |  %+.1f cents",
+             pitch_note_name(pitch->midi_note),
+             pitch_note_octave(pitch->midi_note),
+             pitch->cents);
+    snprintf(confidence_text, sizeof(confidence_text), "CONFIDENCE  %d%%", (int)(pitch->confidence * 100.0f + 0.5f));
+
+    theme_draw_heading(g_theme, frequency_text, bounds.x, frequency_y, 22.0f, g_theme->text);
+    float note_y = frequency_y + theme_scaled_size(g_theme, 22.0f) + 6.0f;
+    theme_draw_text(g_theme, note_text, bounds.x, note_y, 14.0f, g_theme->muted_text);
+    float badge_y = note_y + theme_scaled_size(g_theme, 14.0f) + 9.0f;
+    shell_draw_badge(g_theme, (Rectangle){bounds.x, badge_y, 164.0f, 30.0f}, confidence_text,
+                     pitch->confidence >= 0.90f ? (Color){70, 190, 120, 255} : (Color){229, 160, 62, 255});
+}
+
 int main(void) {
-    SetConfigFlags(FLAG_VSYNC_HINT);
+    windows_app_prepare_process();
+    SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Spectra - Fourier Additive Synth Desktop");
+    set_spectra_window_icon();
+    windows_app_apply_window_icon(GetWindowHandle());
+    SetWindowMinSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
     InitAudioDevice();
     bool audio_ready = IsAudioDeviceReady();
     if (audio_ready) {
@@ -233,13 +315,23 @@ int main(void) {
     Spectrum spectrum = {0};
     Peak peaks[MAX_PEAKS] = {0};
     int peak_count = 0;
+    PitchEstimate pitch = {0};
     AudioClip clip;
     audio_clip_init(&clip);
+    AppPage active_page = APP_PAGE_OVERVIEW;
 
     while (!WindowShouldClose()) {
 #if defined(SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL)
         double frame_started_at = GetTime();
 #endif
+
+        bool toggle_fullscreen_requested = IsKeyPressed(KEY_F11);
+
+        if (IsKeyPressed(KEY_ONE)) active_page = APP_PAGE_OVERVIEW;
+        if (IsKeyPressed(KEY_TWO)) active_page = APP_PAGE_SYNTH;
+        if (IsKeyPressed(KEY_THREE)) active_page = APP_PAGE_ANALYSIS;
+        if (IsKeyPressed(KEY_FOUR)) active_page = APP_PAGE_HARMONIC_LAB;
+        if (IsKeyPressed(KEY_FIVE)) active_page = APP_PAGE_SPECTROGRAM;
 
         if (dirty) {
             sample_buffer_free(&generated);
@@ -247,6 +339,7 @@ int main(void) {
             generated = render_tone(fundamental, harmonics, duration_seconds, master_gain);
             spectrum = compute_magnitude_spectrum(generated.samples, generated.count, generated.sample_rate);
             peak_count = find_peaks(&spectrum, 20.0f, 8000.0f, -55.0f, peaks, MAX_PEAKS);
+            pitch = estimate_pitch(&generated, 40.0f, 1200.0f);
             audio_clip_set_samples(&clip, &generated);
             dirty = false;
         }
@@ -254,96 +347,130 @@ int main(void) {
         BeginDrawing();
         ClearBackground(theme.background);
 
-        DrawText("Spectra", 28, 24, 42, (Color){23, 32, 34, 255});
-        DrawText("Fourier-based desktop audio analysis and additive synthesis for musical sound.",
-                 30,
-                 72,
-                 18,
-                 (Color){85, 98, 102, 255});
-        DrawText(status, 30, 102, 17, (Color){15, 118, 110, 255});
+        AppShellFrame shell_frame = draw_app_shell(&theme, active_page, audio_ready);
+        active_page = shell_frame.page;
+        if (shell_frame.toggle_fullscreen) toggle_fullscreen_requested = true;
 
-        Rectangle synth_panel = {24, 134, 460, 680};
-        Rectangle visual_panel = {504, 134, 652, 680};
-        draw_panel(&theme, synth_panel, "Harmonic Synth");
-        draw_panel(&theme, visual_panel, "Visualization");
+        if (active_page == APP_PAGE_OVERVIEW) {
+            AppPage requested_page = draw_overview_page(&theme, shell_frame.workspace);
+            if (requested_page != APP_PAGE_COUNT) active_page = requested_page;
+        } else if (active_page == APP_PAGE_SYNTH) {
+            Rectangle workspace = shell_frame.workspace;
+            float panel_gap = 16.0f;
+            float synth_width = fminf(520.0f, fmaxf(460.0f, workspace.width * 0.36f));
+            Rectangle synth_panel = {workspace.x, workspace.y, synth_width, workspace.height};
+            Rectangle visual_panel = {synth_panel.x + synth_panel.width + panel_gap, workspace.y,
+                                      workspace.width - synth_panel.width - panel_gap, workspace.height};
+            draw_panel(&theme, synth_panel, "Harmonic Synth");
+            draw_panel(&theme, visual_panel, "Visualization");
 
-        Rectangle play_button = {42, 178, 128, 42};
-        Rectangle stop_button = {182, 178, 112, 42};
-        Rectangle export_button = {306, 178, 152, 42};
-        if (draw_button(&theme, play_button, "Play tone", (Color){15, 118, 110, 255}) || IsKeyPressed(KEY_SPACE)) {
-            if (!audio_ready) {
-                snprintf(status, sizeof(status), "No audio device detected. Try export WAV or check WSL/Windows audio output.");
-            } else if (audio_clip_play(&clip)) {
-                snprintf(status, sizeof(status), "Playing %.1f Hz %s tone at full app volume.", fundamental, PRESETS[selected_preset].name);
-            } else {
-                snprintf(status, sizeof(status), "Playback buffer was not ready. Try adjusting a slider and pressing Play again.");
+            float controls_x = synth_panel.x + 20.0f;
+            float controls_width = synth_panel.width - 40.0f;
+            float button_space = controls_width - 20.0f;
+            float play_width = button_space * 0.30f;
+            float stop_width = button_space * 0.27f;
+            Rectangle play_button = {controls_x, synth_panel.y + 68.0f, play_width, 44};
+            Rectangle stop_button = {play_button.x + play_button.width + 10.0f, play_button.y, stop_width, 44};
+            Rectangle export_button = {stop_button.x + stop_button.width + 10.0f, play_button.y,
+                                       controls_x + controls_width - stop_button.x - stop_button.width - 10.0f, 44};
+            if (draw_button(&theme, play_button, "Play", theme.accent) || IsKeyPressed(KEY_SPACE)) {
+                if (!audio_ready) {
+                    snprintf(status, sizeof(status), "No audio device detected. Check Windows audio output.");
+                } else if (audio_clip_play(&clip)) {
+                    snprintf(status, sizeof(status), "Playing %.1f Hz %s tone.", fundamental, PRESETS[selected_preset].name);
+                } else {
+                    snprintf(status, sizeof(status), "Playback buffer was not ready. Adjust a control and try again.");
+                }
             }
-        }
-        if (draw_button(&theme, stop_button, "Stop", (Color){120, 75, 20, 255})) {
-            audio_clip_stop(&clip);
-            snprintf(status, sizeof(status), "Stopped playback.");
-        }
-        if (draw_button(&theme, export_button, "Export WAV", (Color){37, 99, 235, 255})) {
-            if (export_samples_to_wav("spectra-tone.wav", &generated)) {
-                snprintf(status, sizeof(status), "Exported spectra-tone.wav");
-            } else {
-                snprintf(status, sizeof(status), "Could not export spectra-tone.wav");
+            if (draw_button(&theme, stop_button, "Stop", (Color){226, 146, 58, 255})) {
+                audio_clip_stop(&clip);
+                snprintf(status, sizeof(status), "Stopped playback.");
             }
-        }
-
-        float new_fundamental =
-            draw_slider(&theme, (Rectangle){42, 244, 392, 48}, "Fundamental frequency (Hz)", fundamental, 40.0f, 1200.0f);
-        float new_duration =
-            draw_slider(&theme, (Rectangle){42, 306, 392, 48}, "Duration (seconds)", duration_seconds, 0.2f, 3.0f);
-        float new_gain = draw_slider(&theme, (Rectangle){42, 368, 392, 48}, "Master gain", master_gain, 0.05f, 1.0f);
-        if (fabsf(new_fundamental - fundamental) > 0.01f || fabsf(new_duration - duration_seconds) > 0.001f ||
-            fabsf(new_gain - master_gain) > 0.001f) {
-            fundamental = new_fundamental;
-            duration_seconds = new_duration;
-            master_gain = new_gain;
-            dirty = true;
-        }
-
-        DrawText("Presets", 42, 438, 18, (Color){26, 34, 36, 255});
-        for (int i = 0; i < PRESET_COUNT; i++) {
-            Rectangle bounds = {42.0f + (float)(i % 2) * 202.0f, 466.0f + (float)(i / 2) * 44.0f, 190.0f, 34.0f};
-            Color accent = selected_preset == (PresetId)i ? (Color){15, 118, 110, 255} : (Color){67, 78, 82, 255};
-            if (draw_button(&theme, bounds, PRESETS[i].name, accent)) {
-                selected_preset = (PresetId)i;
-                apply_preset(selected_preset, harmonics);
-                dirty = true;
-                snprintf(status, sizeof(status), "Loaded %s preset: %s.", PRESETS[i].name, PRESETS[i].description);
+            if (draw_button(&theme, export_button, "Export WAV", theme.blue)) {
+                if (export_samples_to_wav("spectra-tone.wav", &generated)) {
+                    snprintf(status, sizeof(status), "Exported spectra-tone.wav");
+                } else {
+                    snprintf(status, sizeof(status), "Could not export spectra-tone.wav");
+                }
             }
-        }
 
-        DrawText("Harmonics", 42, 602, 18, (Color){26, 34, 36, 255});
-        for (int i = 0; i < HARMONIC_COUNT; i++) {
-            int column = i % 4;
-            int row = i / 4;
-            char label[32];
-            snprintf(label, sizeof(label), "H%02d", i + 1);
-            Rectangle slider = {42.0f + (float)column * 102.0f, 630.0f + (float)row * 42.0f, 86.0f, 36.0f};
-            float new_amplitude = draw_slider(&theme, slider, label, harmonics[i].amplitude, 0.0f, 1.0f);
-            if (fabsf(new_amplitude - harmonics[i].amplitude) > 0.001f) {
-                harmonics[i].amplitude = new_amplitude;
+            DrawText(status, (int)controls_x, (int)synth_panel.y + 122, 12, theme.muted_text);
+            float new_fundamental =
+                draw_slider(&theme, (Rectangle){controls_x, synth_panel.y + 154.0f, controls_width, 42},
+                            "Fundamental frequency (Hz)", fundamental, 40.0f, 1200.0f);
+            float new_duration =
+                draw_slider(&theme, (Rectangle){controls_x, synth_panel.y + 214.0f, controls_width, 42},
+                            "Duration (seconds)", duration_seconds, 0.2f, 3.0f);
+            float new_gain = draw_slider(&theme, (Rectangle){controls_x, synth_panel.y + 274.0f, controls_width, 42},
+                                         "Master gain", master_gain, 0.05f, 1.0f);
+            if (fabsf(new_fundamental - fundamental) > 0.01f || fabsf(new_duration - duration_seconds) > 0.001f ||
+                fabsf(new_gain - master_gain) > 0.001f) {
+                fundamental = new_fundamental;
+                duration_seconds = new_duration;
+                master_gain = new_gain;
                 dirty = true;
             }
+
+            theme_draw_heading(&theme, "Presets", controls_x, synth_panel.y + 334.0f, 16.0f, theme.text);
+            float preset_width = (controls_width - 16.0f) / 3.0f;
+            for (int i = 0; i < PRESET_COUNT; i++) {
+                Rectangle bounds = {controls_x + (float)(i % 3) * (preset_width + 8.0f),
+                                    synth_panel.y + 370.0f + (float)(i / 3) * 44.0f, preset_width, 36.0f};
+                Color accent = selected_preset == (PresetId)i ? theme.accent : theme.muted_text;
+                if (draw_button(&theme, bounds, PRESETS[i].name, accent)) {
+                    selected_preset = (PresetId)i;
+                    apply_preset(selected_preset, harmonics);
+                    dirty = true;
+                    snprintf(status, sizeof(status), "Loaded %s: %s.", PRESETS[i].name, PRESETS[i].description);
+                }
+            }
+
+            theme_draw_heading(&theme, "Harmonics", controls_x, synth_panel.y + 462.0f, 16.0f, theme.text);
+            float harmonic_width = (controls_width - 30.0f) / 4.0f;
+            float harmonic_row_gap = fmaxf(34.0f, fminf(52.0f, (synth_panel.height - 544.0f) / 3.0f));
+            for (int i = 0; i < HARMONIC_COUNT; i++) {
+                int column = i % 4;
+                int row = i / 4;
+                char label[32];
+                snprintf(label, sizeof(label), "H%d", i + 1);
+                Rectangle slider = {controls_x + (float)column * (harmonic_width + 10.0f),
+                                    synth_panel.y + 500.0f + (float)row * harmonic_row_gap, harmonic_width, 34.0f};
+                float new_amplitude = draw_slider(&theme, slider, label, harmonics[i].amplitude, 0.0f, 1.0f);
+                if (fabsf(new_amplitude - harmonics[i].amplitude) > 0.001f) {
+                    harmonics[i].amplitude = new_amplitude;
+                    dirty = true;
+                }
+            }
+
+            float visual_x = visual_panel.x + 24.0f;
+            float visual_width = visual_panel.width - 48.0f;
+            float waveform_height = fminf(186.0f, fmaxf(110.0f, visual_panel.height * 0.24f));
+            theme_draw_heading(&theme, "Waveform", visual_x, visual_panel.y + 70.0f, 17.0f, theme.text);
+            Rectangle waveform_bounds = {visual_x, visual_panel.y + 112.0f, visual_width, waveform_height};
+            draw_waveform(waveform_bounds, &generated);
+
+            float spectrum_title_y = waveform_bounds.y + waveform_bounds.height + 28.0f;
+            theme_draw_heading(&theme, "Frequency spectrum", visual_x, spectrum_title_y, 17.0f, theme.text);
+            float bottom_height = 170.0f;
+            float bottom_y = visual_panel.y + visual_panel.height - bottom_height - 22.0f;
+            Rectangle spectrum_bounds = {visual_x, spectrum_title_y + 30.0f, visual_width,
+                                         bottom_y - spectrum_title_y - 52.0f};
+            draw_spectrum(spectrum_bounds, &spectrum, peaks, peak_count);
+
+            float readout_width = visual_width * 0.46f;
+            draw_peak_readout((Rectangle){visual_x, bottom_y, readout_width, bottom_height}, peaks, peak_count);
+            float pitch_x = visual_x + readout_width + 28.0f;
+            draw_pitch_readout((Rectangle){pitch_x, bottom_y, visual_width - readout_width - 28.0f, bottom_height},
+                               &pitch);
+        } else if (active_page == APP_PAGE_ANALYSIS) {
+            draw_analysis_page(&theme, shell_frame.workspace);
+        } else if (active_page == APP_PAGE_HARMONIC_LAB) {
+            draw_harmonic_lab_page(&theme, shell_frame.workspace);
+        } else if (active_page == APP_PAGE_SPECTROGRAM) {
+            draw_spectrogram_page(&theme, shell_frame.workspace);
+        } else if (active_page == APP_PAGE_SETTINGS) {
+            draw_settings_page(&theme, shell_frame.workspace, audio_ready);
         }
-
-        DrawText("Waveform", 528, 178, 20, (Color){26, 34, 36, 255});
-        draw_waveform((Rectangle){528, 208, 604, 170}, &generated);
-
-        DrawText("Frequency spectrum", 528, 402, 20, (Color){26, 34, 36, 255});
-        draw_spectrum((Rectangle){528, 432, 604, 180}, &spectrum, peaks, peak_count);
-        draw_peak_readout((Rectangle){528, 634, 310, 90}, peaks, peak_count);
-
-        DrawText("Fourier idea: timbre is shaped by energy at harmonic frequencies.",
-                 844,
-                 634,
-                 18,
-                 (Color){26, 34, 36, 255});
-        DrawText("This MVP generates additive tones, applies ADSR, normalizes,", 844, 664, 16, (Color){86, 98, 102, 255});
-        DrawText("plays them with Raylib audio, and visualizes waveform + FFT.", 844, 686, 16, (Color){86, 98, 102, 255});
 
         EndDrawing();
 
@@ -357,6 +484,10 @@ int main(void) {
             WaitTime(remaining_seconds);
         }
 #endif
+
+        if (toggle_fullscreen_requested) {
+            ToggleBorderlessWindowed();
+        }
     }
 
     audio_clip_unload(&clip);

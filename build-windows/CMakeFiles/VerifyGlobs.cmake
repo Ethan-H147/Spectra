@@ -9,9 +9,12 @@ set(OLD_GLOB
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/dsp_types.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/fft.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/harmonic_analysis.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/pitch_detection.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/signal_utils.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/windowing.c"
   "C:/Users/huyus/Projects/C-Spectra/src/main.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/platform/windows_app.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/ui/app_shell.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/theme.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/widgets.c"
   )
@@ -36,13 +39,14 @@ if(NOT "${NEW_GLOB}" STREQUAL "${OLD_GLOB}")
   file(TOUCH_NOCREATE "C:/Users/huyus/Projects/C-Spectra/build-windows/CMakeFiles/cmake.verify_globs")
 endif()
 
-# SPECTRA_DSP_SOURCES at CMakeLists.txt:45 (file)
+# SPECTRA_DSP_SOURCES at CMakeLists.txt:60 (file)
 file(GLOB_RECURSE NEW_GLOB LIST_DIRECTORIES false "C:/Users/huyus/Projects/C-Spectra/src/dsp/*.c")
 set(OLD_GLOB
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/additive_synth.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/dsp_types.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/fft.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/harmonic_analysis.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/pitch_detection.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/signal_utils.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/windowing.c"
   )

@@ -1,6 +1,7 @@
 #include "dsp/additive_synth.h"
 #include "dsp/fft.h"
 #include "dsp/harmonic_analysis.h"
+#include "dsp/pitch_detection.h"
 #include "dsp/signal_utils.h"
 #include "dsp/windowing.h"
 
@@ -68,12 +69,54 @@ static int test_spectrum_for_a4(void) {
     return 0;
 }
 
+static int test_pitch_for_a4(void) {
+    SampleBuffer sine = generate_sine_wave(440.0f, 0.8f, 0.5f, 44100);
+    PitchEstimate pitch = estimate_pitch(&sine, 40.0f, 1200.0f);
+    ASSERT_TRUE(pitch.valid, "440 Hz sine should produce a valid pitch estimate");
+    ASSERT_TRUE(fabsf(pitch.frequency_hz - 440.0f) < 1.0f, "estimated A4 frequency should be near 440 Hz");
+    ASSERT_TRUE(pitch.midi_note == 69, "440 Hz should map to MIDI note 69");
+    ASSERT_TRUE(pitch_note_name(pitch.midi_note)[0] == 'A', "MIDI note 69 should be named A");
+    ASSERT_TRUE(pitch_note_octave(pitch.midi_note) == 4, "MIDI note 69 should be in octave 4");
+    ASSERT_TRUE(fabsf(pitch.cents) < 4.0f, "440 Hz should be close to zero cents from A4");
+    ASSERT_TRUE(pitch.confidence > 0.90f, "clean sine pitch confidence should be high");
+    sample_buffer_free(&sine);
+    return 0;
+}
+
+static int test_pitch_for_harmonic_tone(void) {
+    Harmonic harmonics[] = {
+        {2, 0.80f, 0.0f},
+        {3, 0.50f, 0.0f},
+        {4, 0.30f, 0.0f},
+    };
+    ADSREnvelope envelope = {0.0f, 0.0f, 1.0f, 0.0f};
+    SampleBuffer tone = generate_additive_tone(110.0f, harmonics, 3, 0.5f, 44100, envelope);
+    PitchEstimate pitch = estimate_pitch(&tone, 40.0f, 1200.0f);
+    ASSERT_TRUE(pitch.valid, "harmonic tone should produce a valid pitch estimate");
+    ASSERT_TRUE(fabsf(pitch.frequency_hz - 110.0f) < 1.0f,
+                "estimator should recover a missing 110 Hz fundamental from its harmonics");
+    ASSERT_TRUE(pitch.confidence > 0.80f, "periodic harmonic tone pitch confidence should be high");
+    sample_buffer_free(&tone);
+    return 0;
+}
+
+static int test_pitch_rejects_silence(void) {
+    float samples[4096] = {0};
+    SampleBuffer silence = {samples, 4096, 44100};
+    PitchEstimate pitch = estimate_pitch(&silence, 40.0f, 1200.0f);
+    ASSERT_TRUE(!pitch.valid, "silence should not produce a pitch estimate");
+    return 0;
+}
+
 int main(void) {
     if (test_sine_length() != 0) return 1;
     if (test_hann_window() != 0) return 1;
     if (test_additive_normalization() != 0) return 1;
     if (test_peak_detection() != 0) return 1;
     if (test_spectrum_for_a4() != 0) return 1;
+    if (test_pitch_for_a4() != 0) return 1;
+    if (test_pitch_for_harmonic_tone() != 0) return 1;
+    if (test_pitch_rejects_silence() != 0) return 1;
 
     puts("All DSP tests passed.");
     return 0;

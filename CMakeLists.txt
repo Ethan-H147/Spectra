@@ -13,6 +13,21 @@ file(GLOB_RECURSE SPECTRA_SOURCES CONFIGURE_DEPENDS
 add_executable(spectra_desktop ${SPECTRA_SOURCES})
 target_include_directories(spectra_desktop PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+if(WIN32)
+    set_target_properties(spectra_desktop PROPERTIES WIN32_EXECUTABLE TRUE)
+    if(MSVC)
+        target_link_options(spectra_desktop PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+
+    string(REPLACE "\\" "/" SPECTRA_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/spectra.ico")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/windows/spectra.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc"
+        @ONLY
+    )
+    target_sources(spectra_desktop PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc")
+endif()
+
 option(
     SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL
     "Drive buffer swapping, event polling, and frame pacing for Raylib builds with custom frame control enabled"
@@ -37,7 +52,7 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(spectra_desktop PRIVATE winmm)
+    target_link_libraries(spectra_desktop PRIVATE winmm shell32)
 elseif(UNIX AND NOT APPLE)
     target_link_libraries(spectra_desktop PRIVATE m)
 endif()

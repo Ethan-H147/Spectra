@@ -16,6 +16,9 @@
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\harmonic_analysis.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\pitch_detection.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\signal_utils.c">
       <Filter>Source Files</Filter>
     </ClCompile>

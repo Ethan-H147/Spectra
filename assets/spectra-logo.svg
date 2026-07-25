@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">Spectra waveform logo</title>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#FAFAFA"/>
+  <path
+    d="M28 128 C45 128 47 72 64 72 S83 184 100 184 S119 72 136 72 S155 184 172 184 S191 128 228 128"
+    fill="none"
+    stroke="#000000"
+    stroke-width="18"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
