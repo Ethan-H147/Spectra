@@ -1,0 +1,36 @@
+Start testing: Jul 27 02:32 China Standard Time
+----------------------------------------------------------
+1/2 Testing: dsp_tests
+1/2 Test: dsp_tests
+Command: "C:/Users/huyus/Projects/C-Spectra/build-windows/Release/dsp_tests.exe"
+Directory: C:/Users/huyus/Projects/C-Spectra/build-windows
+"dsp_tests" start time: Jul 27 02:32 China Standard Time
+Output:
+----------------------------------------------------------
+All DSP tests passed.
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"dsp_tests" end time: Jul 27 02:32 China Standard Time
+"dsp_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: audio_import_tests
+2/2 Test: audio_import_tests
+Command: "C:/Users/huyus/Projects/C-Spectra/build-windows/Release/audio_import_tests.exe"
+Directory: C:/Users/huyus/Projects/C-Spectra/build-windows
+"audio_import_tests" start time: Jul 27 02:32 China Standard Time
+Output:
+----------------------------------------------------------
+INFO: WAVE: Data loaded successfully (8000 Hz, 16 bit, 1 channels)
+Unicode-path audio import test passed.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"audio_import_tests" end time: Jul 27 02:32 China Standard Time
+"audio_import_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jul 27 02:32 China Standard Time

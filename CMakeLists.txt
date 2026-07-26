@@ -52,7 +52,7 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(spectra_desktop PRIVATE winmm shell32)
+    target_link_libraries(spectra_desktop PRIVATE winmm shell32 comdlg32)
 elseif(UNIX AND NOT APPLE)
     target_link_libraries(spectra_desktop PRIVATE m)
 endif()
@@ -67,11 +67,25 @@ add_executable(dsp_tests
 )
 target_include_directories(dsp_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+add_executable(audio_import_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_import_tests.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/audio_import.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/channel_mix.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/dsp_types.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/signal_utils.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/file_io.c"
+)
+target_include_directories(audio_import_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(audio_import_tests PRIVATE raylib)
+
 if(WIN32)
     target_link_libraries(dsp_tests PRIVATE winmm)
+    target_link_libraries(audio_import_tests PRIVATE winmm)
 elseif(UNIX AND NOT APPLE)
     target_link_libraries(dsp_tests PRIVATE m)
+    target_link_libraries(audio_import_tests PRIVATE m)
 endif()
 
 enable_testing()
 add_test(NAME dsp_tests COMMAND dsp_tests)
+add_test(NAME audio_import_tests COMMAND audio_import_tests)

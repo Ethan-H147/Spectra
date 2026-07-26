@@ -415,11 +415,17 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   <ItemGroup>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\tests\dsp_tests.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\additive_synth.c" />
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\channel_mix.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\dsp_types.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\fft.c" />
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\fourier_reconstruction.c" />
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\global_fourier_reconstruction.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\harmonic_analysis.c" />
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\harmonic_resynthesis.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\pitch_detection.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\signal_utils.c" />
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\stft_reconstruction.c" />
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\waveform_summary.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\windowing.c" />
   </ItemGroup>
   <ItemGroup />

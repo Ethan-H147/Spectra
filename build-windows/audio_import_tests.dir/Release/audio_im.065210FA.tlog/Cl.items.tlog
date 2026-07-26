@@ -1,0 +1,6 @@
+C:\Users\huyus\Projects\C-Spectra\tests\audio_import_tests.c;C:\Users\huyus\Projects\C-Spectra\build-windows\audio_import_tests.dir\Release\audio_import_tests.obj
+C:\Users\huyus\Projects\C-Spectra\src\audio\audio_import.c;C:\Users\huyus\Projects\C-Spectra\build-windows\audio_import_tests.dir\Release\audio_import.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\channel_mix.c;C:\Users\huyus\Projects\C-Spectra\build-windows\audio_import_tests.dir\Release\channel_mix.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\dsp_types.c;C:\Users\huyus\Projects\C-Spectra\build-windows\audio_import_tests.dir\Release\dsp_types.obj
+C:\Users\huyus\Projects\C-Spectra\src\dsp\signal_utils.c;C:\Users\huyus\Projects\C-Spectra\build-windows\audio_import_tests.dir\Release\signal_utils.obj
+C:\Users\huyus\Projects\C-Spectra\src\platform\file_io.c;C:\Users\huyus\Projects\C-Spectra\build-windows\audio_import_tests.dir\Release\file_io.obj

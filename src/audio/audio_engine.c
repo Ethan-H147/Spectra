@@ -1,6 +1,7 @@
 #include "audio/audio_engine.h"
 
 #include "dsp/signal_utils.h"
+#include "platform/file_io.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -27,11 +28,12 @@ void audio_clip_init(AudioClip *clip) {
     if (clip == NULL) {
         return;
     }
-    clip->loaded = false;
+    *clip = (AudioClip){0};
 }
 
 bool audio_clip_set_samples(AudioClip *clip, const SampleBuffer *buffer) {
-    if (clip == NULL || buffer == NULL || buffer->samples == NULL || buffer->count == 0) {
+    if (clip == NULL || buffer == NULL || buffer->samples == NULL ||
+        buffer->count == 0 || buffer->sample_rate == 0U) {
         return false;
     }
 
@@ -56,6 +58,8 @@ bool audio_clip_set_samples(AudioClip *clip, const SampleBuffer *buffer) {
     clip->sound = LoadSoundFromWave(wave);
     clip->loaded = clip->sound.frameCount > 0;
     if (clip->loaded) {
+        clip->duration_seconds =
+            (float)buffer->count / (float)buffer->sample_rate;
         SetSoundVolume(clip->sound, 1.0f);
     }
     free(pcm);
@@ -70,6 +74,36 @@ bool audio_clip_play(AudioClip *clip) {
     StopSound(clip->sound);
     SetSoundVolume(clip->sound, 1.0f);
     PlaySound(clip->sound);
+    clip->paused = false;
+    clip->paused_position_seconds = 0.0f;
+    clip->playback_started_at = GetTime();
+    return true;
+}
+
+bool audio_clip_pause(AudioClip *clip) {
+    if (clip == NULL || !clip->loaded || clip->paused ||
+        !IsSoundPlaying(clip->sound)) {
+        return false;
+    }
+
+    clip->paused_position_seconds +=
+        (float)(GetTime() - clip->playback_started_at);
+    if (clip->paused_position_seconds > clip->duration_seconds) {
+        clip->paused_position_seconds = clip->duration_seconds;
+    }
+    PauseSound(clip->sound);
+    clip->paused = true;
+    return true;
+}
+
+bool audio_clip_resume(AudioClip *clip) {
+    if (clip == NULL || !clip->loaded || !clip->paused) {
+        return false;
+    }
+
+    ResumeSound(clip->sound);
+    clip->paused = false;
+    clip->playback_started_at = GetTime();
     return true;
 }
 
@@ -79,23 +113,66 @@ void audio_clip_stop(AudioClip *clip) {
     }
 
     StopSound(clip->sound);
+    clip->paused = false;
+    clip->paused_position_seconds = 0.0f;
+    clip->playback_started_at = 0.0;
+}
+
+bool audio_clip_is_playing(const AudioClip *clip) {
+    return clip != NULL && clip->loaded && !clip->paused &&
+           IsSoundPlaying(clip->sound);
+}
+
+bool audio_clip_is_paused(const AudioClip *clip) {
+    return clip != NULL && clip->loaded && clip->paused;
+}
+
+bool audio_clip_is_active(const AudioClip *clip) {
+    return audio_clip_is_playing(clip) || audio_clip_is_paused(clip);
+}
+
+float audio_clip_position_seconds(const AudioClip *clip) {
+    if (clip == NULL || !clip->loaded) {
+        return 0.0f;
+    }
+    if (clip->paused) {
+        return clip->paused_position_seconds;
+    }
+    if (!IsSoundPlaying(clip->sound)) {
+        return 0.0f;
+    }
+
+    float position =
+        clip->paused_position_seconds +
+        (float)(GetTime() - clip->playback_started_at);
+    if (position < 0.0f) position = 0.0f;
+    if (position > clip->duration_seconds) position = clip->duration_seconds;
+    return position;
+}
+
+float audio_clip_duration_seconds(const AudioClip *clip) {
+    return clip != NULL && clip->loaded ? clip->duration_seconds : 0.0f;
 }
 
 void audio_clip_unload(AudioClip *clip) {
-    if (clip == NULL || !clip->loaded) {
+    if (clip == NULL) {
         return;
     }
 
-    UnloadSound(clip->sound);
-    clip->loaded = false;
+    if (clip->loaded) {
+        UnloadSound(clip->sound);
+    }
+    *clip = (AudioClip){0};
 }
 
 bool export_samples_to_wav(const char *path, const SampleBuffer *buffer) {
-    if (path == NULL || buffer == NULL || buffer->samples == NULL || buffer->count == 0) {
+    if (path == NULL || buffer == NULL || buffer->samples == NULL ||
+        buffer->count == 0 || buffer->sample_rate == 0U ||
+        buffer->count > (UINT32_MAX - 36U) / sizeof(int16_t)) {
         return false;
     }
 
-    FILE *file = fopen(path, "wb");
+    FILE *file = platform_fopen_utf8(path, "wb");
     if (file == NULL) {
         return false;
     }
@@ -124,7 +201,10 @@ bool export_samples_to_wav(const char *path, const SampleBuffer *buffer) {
         write_u16_le(file, (uint16_t)float_to_pcm16(buffer->samples[i]));
     }
 
-    fclose(file);
-    return true;
+    bool written = ferror(file) == 0;
+    if (fclose(file) != 0) {
+        written = false;
+    }
+    return written;
 }
 

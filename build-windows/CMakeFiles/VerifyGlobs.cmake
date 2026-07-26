@@ -5,16 +5,25 @@
 file(GLOB_RECURSE NEW_GLOB LIST_DIRECTORIES false "C:/Users/huyus/Projects/C-Spectra/src/*.c")
 set(OLD_GLOB
   "C:/Users/huyus/Projects/C-Spectra/src/audio/audio_engine.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/audio/audio_import.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/additive_synth.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/channel_mix.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/dsp_types.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/fft.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/fourier_reconstruction.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/global_fourier_reconstruction.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/harmonic_analysis.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/harmonic_resynthesis.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/pitch_detection.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/signal_utils.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/stft_reconstruction.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/waveform_summary.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/windowing.c"
   "C:/Users/huyus/Projects/C-Spectra/src/main.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/platform/file_io.c"
   "C:/Users/huyus/Projects/C-Spectra/src/platform/windows_app.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/app_shell.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/ui/help_center.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/theme.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/widgets.c"
   )
@@ -43,11 +52,17 @@ endif()
 file(GLOB_RECURSE NEW_GLOB LIST_DIRECTORIES false "C:/Users/huyus/Projects/C-Spectra/src/dsp/*.c")
 set(OLD_GLOB
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/additive_synth.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/channel_mix.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/dsp_types.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/fft.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/fourier_reconstruction.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/global_fourier_reconstruction.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/harmonic_analysis.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/harmonic_resynthesis.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/pitch_detection.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/signal_utils.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/stft_reconstruction.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/dsp/waveform_summary.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/windowing.c"
   )
 if(NOT "${NEW_GLOB}" STREQUAL "${OLD_GLOB}")

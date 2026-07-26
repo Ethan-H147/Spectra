@@ -4,7 +4,13 @@
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\audio\audio_engine.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\audio\audio_import.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\additive_synth.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\channel_mix.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\dsp_types.c">
@@ -13,7 +19,16 @@
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\fft.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\fourier_reconstruction.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\global_fourier_reconstruction.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\harmonic_analysis.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\harmonic_resynthesis.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\pitch_detection.c">
@@ -22,16 +37,28 @@
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\signal_utils.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\stft_reconstruction.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\waveform_summary.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\dsp\windowing.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\main.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\platform\file_io.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\platform\windows_app.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\app_shell.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\help_center.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\theme.c">

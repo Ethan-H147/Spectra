@@ -2,6 +2,8 @@
 
 #include "dsp/signal_utils.h"
 
+#include <math.h>
+
 static void sort_peaks_by_frequency(Peak *peaks, int peak_count) {
     for (int i = 0; i < peak_count - 1; i++) {
         for (int j = i + 1; j < peak_count; j++) {
@@ -58,4 +60,112 @@ int find_peaks(const Spectrum *spectrum,
 
     sort_peaks_by_frequency(peaks, peak_count);
     return peak_count;
+}
+
+static float clamp_local(float value, float minimum, float maximum) {
+    if (value < minimum) return minimum;
+    if (value > maximum) return maximum;
+    return value;
+}
+
+static void interpolate_peak(const Spectrum *spectrum,
+                             size_t bin,
+                             float *frequency,
+                             float *magnitude) {
+    *frequency = spectrum->frequencies[bin];
+    *magnitude = spectrum->magnitudes[bin];
+    if (bin == 0U || bin + 1U >= spectrum->count) {
+        return;
+    }
+
+    float left = spectrum->magnitudes[bin - 1U];
+    float center = spectrum->magnitudes[bin];
+    float right = spectrum->magnitudes[bin + 1U];
+    float curvature = left - 2.0f * center + right;
+    if (fabsf(curvature) < 1.0e-12f) {
+        return;
+    }
+
+    float offset = clamp_local(0.5f * (left - right) / curvature, -0.5f, 0.5f);
+    float bin_width = spectrum->frequencies[bin + 1U] - spectrum->frequencies[bin];
+    *frequency += offset * bin_width;
+    *magnitude = fmaxf(0.0f, center - 0.25f * (left - right) * offset);
+}
+
+int extract_harmonics(const Spectrum *spectrum,
+                      float fundamental_frequency,
+                      int harmonic_count,
+                      float tolerance_cents,
+                      float threshold_db,
+                      ExtractedHarmonic *harmonics,
+                      int capacity) {
+    if (spectrum == NULL || spectrum->frequencies == NULL || spectrum->magnitudes == NULL ||
+        spectrum->count < 3U || fundamental_frequency <= 0.0f || harmonic_count <= 0 ||
+        tolerance_cents <= 0.0f || harmonics == NULL || capacity <= 0) {
+        return 0;
+    }
+
+    int entry_count = harmonic_count < capacity ? harmonic_count : capacity;
+    float maximum_frequency = spectrum->frequencies[spectrum->count - 1U];
+    float strongest_magnitude = 0.0f;
+    int valid_entries = 0;
+
+    for (int index = 0; index < entry_count; index++) {
+        int number = index + 1;
+        float expected = fundamental_frequency * (float)number;
+        ExtractedHarmonic entry = {
+            .harmonic_number = number,
+            .expected_frequency = expected,
+            .detected_frequency = 0.0f,
+            .amplitude = 0.0f,
+            .source_magnitude = 0.0f,
+            .db = -120.0f,
+            .detected = false,
+        };
+
+        if (expected > maximum_frequency) {
+            harmonics[index] = entry;
+            continue;
+        }
+        valid_entries = index + 1;
+
+        float ratio = powf(2.0f, tolerance_cents / 1200.0f);
+        float minimum = expected / ratio;
+        float maximum = expected * ratio;
+        size_t best_bin = 0U;
+        float best_magnitude = 0.0f;
+
+        for (size_t bin = 1U; bin + 1U < spectrum->count; bin++) {
+            float frequency = spectrum->frequencies[bin];
+            if (frequency < minimum) continue;
+            if (frequency > maximum) break;
+
+            float magnitude = spectrum->magnitudes[bin];
+            bool local_maximum =
+                magnitude > spectrum->magnitudes[bin - 1U] && magnitude >= spectrum->magnitudes[bin + 1U];
+            if (local_maximum && linear_to_db(magnitude) >= threshold_db && magnitude > best_magnitude) {
+                best_bin = bin;
+                best_magnitude = magnitude;
+            }
+        }
+
+        if (best_bin != 0U) {
+            interpolate_peak(spectrum, best_bin, &entry.detected_frequency, &entry.source_magnitude);
+            entry.db = linear_to_db(entry.source_magnitude);
+            entry.detected = true;
+            if (entry.source_magnitude > strongest_magnitude) {
+                strongest_magnitude = entry.source_magnitude;
+            }
+        }
+        harmonics[index] = entry;
+    }
+
+    if (strongest_magnitude > 0.0f) {
+        for (int index = 0; index < valid_entries; index++) {
+            if (harmonics[index].detected) {
+                harmonics[index].amplitude = harmonics[index].source_magnitude / strongest_magnitude;
+            }
+        }
+    }
+    return valid_entries;
 }
