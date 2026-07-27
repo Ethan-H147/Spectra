@@ -1,10 +1,10 @@
-Start testing: Jul 27 02:32 China Standard Time
+Start testing: Jul 27 18:42 China Standard Time
 ----------------------------------------------------------
-1/2 Testing: dsp_tests
-1/2 Test: dsp_tests
+1/4 Testing: dsp_tests
+1/4 Test: dsp_tests
 Command: "C:/Users/huyus/Projects/C-Spectra/build-windows/Release/dsp_tests.exe"
 Directory: C:/Users/huyus/Projects/C-Spectra/build-windows
-"dsp_tests" start time: Jul 27 02:32 China Standard Time
+"dsp_tests" start time: Jul 27 18:42 China Standard Time
 Output:
 ----------------------------------------------------------
 All DSP tests passed.
@@ -12,25 +12,60 @@ All DSP tests passed.
 Test time =   0.03 sec
 ----------------------------------------------------------
 Test Passed.
-"dsp_tests" end time: Jul 27 02:32 China Standard Time
+"dsp_tests" end time: Jul 27 18:42 China Standard Time
 "dsp_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-2/2 Testing: audio_import_tests
-2/2 Test: audio_import_tests
+2/4 Testing: audio_import_tests
+2/4 Test: audio_import_tests
 Command: "C:/Users/huyus/Projects/C-Spectra/build-windows/Release/audio_import_tests.exe"
 Directory: C:/Users/huyus/Projects/C-Spectra/build-windows
-"audio_import_tests" start time: Jul 27 02:32 China Standard Time
+"audio_import_tests" start time: Jul 27 18:42 China Standard Time
 Output:
 ----------------------------------------------------------
 INFO: WAVE: Data loaded successfully (8000 Hz, 16 bit, 1 channels)
 Unicode-path audio import test passed.
+INFO: WAVE: Data loaded successfully (8000 Hz, 16 bit, 2 channels)
+INFO: WAVE: Data loaded successfully (8000 Hz, 16 bit, 2 channels)
+Stereo preservation import test passed.
 <end of output>
-Test time =   0.01 sec
+Test time =   0.11 sec
 ----------------------------------------------------------
 Test Passed.
-"audio_import_tests" end time: Jul 27 02:32 China Standard Time
+"audio_import_tests" end time: Jul 27 18:42 China Standard Time
 "audio_import_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Jul 27 02:32 China Standard Time
+3/4 Testing: ui_layout_tests
+3/4 Test: ui_layout_tests
+Command: "C:/Users/huyus/Projects/C-Spectra/build-windows/Release/ui_layout_tests.exe"
+Directory: C:/Users/huyus/Projects/C-Spectra/build-windows
+"ui_layout_tests" start time: Jul 27 18:42 China Standard Time
+Output:
+----------------------------------------------------------
+All UI layout tests passed.
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"ui_layout_tests" end time: Jul 27 18:42 China Standard Time
+"ui_layout_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/4 Testing: runtime_tests
+4/4 Test: runtime_tests
+Command: "C:/Users/huyus/Projects/C-Spectra/build-windows/Release/runtime_tests.exe"
+Directory: C:/Users/huyus/Projects/C-Spectra/build-windows
+"runtime_tests" start time: Jul 27 18:42 China Standard Time
+Output:
+----------------------------------------------------------
+All runtime tests passed.
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"runtime_tests" end time: Jul 27 18:42 China Standard Time
+"runtime_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jul 27 18:42 China Standard Time

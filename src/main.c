@@ -1,6 +1,8 @@
 #include "audio/audio_engine.h"
 #include "audio/audio_import.h"
+#include "audio/reconstruction_cache.h"
 #include "dsp/additive_synth.h"
+#include "dsp/channel_mix.h"
 #include "dsp/fft.h"
 #include "dsp/fourier_reconstruction.h"
 #include "dsp/global_fourier_reconstruction.h"
@@ -10,6 +12,7 @@
 #include "dsp/signal_utils.h"
 #include "dsp/stft_reconstruction.h"
 #include "dsp/waveform_summary.h"
+#include "platform/background_task.h"
 #include "platform/windows_app.h"
 #include "ui/app_shell.h"
 #include "ui/help_center.h"
@@ -59,8 +62,12 @@ static void app_draw_text(const char *text, int x, int y, int font_size, Color c
 #define STFT_SPECTROGRAM_FREQUENCY_BINS 128U
 #define STFT_MAXIMUM_FREQUENCY 12000.0f
 #define STFT_MAX_DURATION_SECONDS 600.0f
-#define FULL_FILE_WORK_SLICE_SECONDS 0.004
-#define GLOBAL_FOURIER_OPERATION_BATCH 8192U
+#define GLOBAL_FOURIER_OPERATION_BATCH 65536U
+#define RECONSTRUCTION_CHANNEL_LIMIT 2U
+#define RECONSTRUCTION_CACHE_BYTE_LIMIT \
+    ((size_t)256U * 1024U * 1024U)
+#define GLOBAL_MODEL_MEMORY_LIMIT \
+    ((size_t)768U * 1024U * 1024U)
 #define TARGET_FPS 60.0
 
 static const ADSREnvelope DEFAULT_ENVELOPE = {0.015f, 0.08f, 0.75f, 0.12f};
@@ -107,6 +114,12 @@ static const PresetInfo PRESETS[PRESET_COUNT] = {
     {"Bright string", "Many upper harmonics"},
 };
 
+typedef enum {
+    GLOBAL_BACKGROUND_IDLE = 0,
+    GLOBAL_BACKGROUND_ANALYSIS,
+    GLOBAL_BACKGROUND_RECONSTRUCTION
+} GlobalBackgroundWork;
+
 typedef struct {
     ImportedAudio audio;
     AudioClip full_clip;
@@ -125,15 +138,26 @@ typedef struct {
     AudioClip frame_original_clip;
     AudioClip fourier_clip;
     GlobalFourierJob global_fourier_job;
+    GlobalFourierJob global_fourier_job_right;
     StftReconstructionJob stft_job;
     StftReconstructionJob adaptive_stft_job;
+    StftReconstructionJob adaptive_stft_job_right;
     SpectrogramData spectrogram;
-    SampleBuffer global_reconstruction;
+    InterleavedBuffer global_reconstruction;
     AudioClip global_clip;
-    SampleBuffer adaptive_reconstruction;
+    InterleavedBuffer adaptive_reconstruction;
     AudioClip adaptive_clip;
+    ReconstructionCache reconstruction_cache;
+    BackgroundTask spectrogram_task;
+    BackgroundTask global_task;
+    BackgroundTask adaptive_task;
+    GlobalBackgroundWork global_background_work;
     Texture2D spectrogram_texture;
     size_t stft_frame_count;
+    unsigned int reconstruction_channels;
+    unsigned int global_reconstruction_channels;
+    GlobalFourierChannelMode global_channel_mode;
+    size_t global_model_memory_limit_bytes;
     int fourier_top_components;
     int fourier_rendered_components;
     int global_bin_budget_components;
@@ -191,8 +215,21 @@ static void imported_analysis_init(ImportedAnalysisState *state) {
     audio_clip_init(&state->adaptive_clip);
     fourier_frame_analysis_init(&state->fourier_analysis);
     global_fourier_job_init(&state->global_fourier_job);
+    global_fourier_job_init(&state->global_fourier_job_right);
     stft_reconstruction_job_init(&state->stft_job);
     stft_reconstruction_job_init(&state->adaptive_stft_job);
+    stft_reconstruction_job_init(
+        &state->adaptive_stft_job_right);
+    reconstruction_cache_init(
+        &state->reconstruction_cache,
+        RECONSTRUCTION_CACHE_BYTE_LIMIT);
+    state->global_model_memory_limit_bytes =
+        GLOBAL_MODEL_MEMORY_LIMIT;
+    state->global_channel_mode =
+        GLOBAL_FOURIER_CHANNEL_MONO;
+    background_task_init(&state->spectrogram_task);
+    background_task_init(&state->global_task);
+    background_task_init(&state->adaptive_task);
     state->global_selected_components = GLOBAL_DEFAULT_TOP_COMPONENTS;
     state->global_bin_budget_components =
         GLOBAL_DEFAULT_TOP_COMPONENTS;
@@ -289,17 +326,204 @@ static bool create_spectrogram_texture(const SpectrogramData *spectrogram, Textu
     return true;
 }
 
+static GlobalFourierJob *global_job_for_channel(
+    ImportedAnalysisState *state,
+    unsigned int channel) {
+    if (state == NULL ||
+        channel >= state->global_reconstruction_channels) {
+        return NULL;
+    }
+    return channel == 0U ? &state->global_fourier_job
+                         : &state->global_fourier_job_right;
+}
+
+static StftReconstructionJob *adaptive_job_for_channel(
+    ImportedAnalysisState *state,
+    unsigned int channel) {
+    if (state == NULL || channel >= state->reconstruction_channels) {
+        return NULL;
+    }
+    return channel == 0U ? &state->adaptive_stft_job
+                         : &state->adaptive_stft_job_right;
+}
+
+static void spectrogram_background_run(
+    BackgroundTaskControl *control,
+    void *context) {
+    ImportedAnalysisState *state =
+        (ImportedAnalysisState *)context;
+    while (state->stft_job.active &&
+           !background_task_cancel_requested(control)) {
+        stft_reconstruction_job_process(&state->stft_job, 4U);
+        background_task_report_progress(
+            control,
+            stft_reconstruction_job_progress(&state->stft_job));
+    }
+    if (state->stft_job.complete) {
+        background_task_report_progress(control, 1.0f);
+    }
+}
+
+static void global_background_run(
+    BackgroundTaskControl *control,
+    void *context) {
+    ImportedAnalysisState *state =
+        (ImportedAnalysisState *)context;
+    for (;;) {
+        bool any_active = false;
+        float progress_sum = 0.0f;
+        for (unsigned int channel = 0U;
+             channel < state->global_reconstruction_channels;
+             channel++) {
+            GlobalFourierJob *job =
+                global_job_for_channel(state, channel);
+            if (job != NULL && job->active) {
+                any_active = true;
+                global_fourier_job_process(
+                    job, GLOBAL_FOURIER_OPERATION_BATCH);
+            }
+            if (job != NULL) {
+                progress_sum +=
+                    global_fourier_job_progress(job);
+            }
+        }
+        if (state->global_reconstruction_channels > 0U) {
+            background_task_report_progress(
+                control,
+                progress_sum /
+                    (float)state
+                        ->global_reconstruction_channels);
+        }
+        if (!any_active ||
+            background_task_cancel_requested(control)) {
+            break;
+        }
+    }
+}
+
+static void adaptive_background_run(
+    BackgroundTaskControl *control,
+    void *context) {
+    ImportedAnalysisState *state =
+        (ImportedAnalysisState *)context;
+    for (;;) {
+        bool any_active = false;
+        float progress_sum = 0.0f;
+        for (unsigned int channel = 0U;
+             channel < state->reconstruction_channels;
+             channel++) {
+            StftReconstructionJob *job =
+                adaptive_job_for_channel(state, channel);
+            if (job != NULL && job->active) {
+                any_active = true;
+                stft_reconstruction_job_process(job, 2U);
+            }
+            if (job != NULL) {
+                progress_sum +=
+                    stft_reconstruction_job_progress(job);
+            }
+        }
+        if (state->reconstruction_channels > 0U) {
+            background_task_report_progress(
+                control,
+                progress_sum /
+                    (float)state->reconstruction_channels);
+        }
+        if (!any_active ||
+            background_task_cancel_requested(control)) {
+            break;
+        }
+    }
+}
+
+static bool global_analysis_ready(
+    const ImportedAnalysisState *state) {
+    if (state == NULL ||
+        state->global_reconstruction_channels == 0U) {
+        return false;
+    }
+    if (!state->global_fourier_job.analysis_ready) return false;
+    return state->global_reconstruction_channels == 1U ||
+           state->global_fourier_job_right.analysis_ready;
+}
+
+static bool global_reconstruction_ready(
+    const ImportedAnalysisState *state) {
+    if (state == NULL ||
+        state->global_reconstruction_channels == 0U) {
+        return false;
+    }
+    if (!state->global_fourier_job.reconstruction_ready) {
+        return false;
+    }
+    return state->global_reconstruction_channels == 1U ||
+           state->global_fourier_job_right.reconstruction_ready;
+}
+
+static float combined_global_retained_energy(
+    const ImportedAnalysisState *state,
+    int component_count) {
+    if (state == NULL || component_count <= 0) return 0.0f;
+    double retained = 0.0;
+    double total = 0.0;
+    for (unsigned int channel = 0U;
+         channel < state->global_reconstruction_channels;
+         channel++) {
+        const GlobalFourierJob *job =
+            channel == 0U ? &state->global_fourier_job
+                          : &state->global_fourier_job_right;
+        int count = component_count;
+        if (count > job->component_count) {
+            count = job->component_count;
+        }
+        if (count > 0 && job->components != NULL) {
+            retained += job->components[count - 1].power;
+            total += job->total_spectral_energy;
+        }
+    }
+    return total > 0.0 ? (float)(retained / total) : 0.0f;
+}
+
+static float combined_adaptive_retained_energy(
+    const ImportedAnalysisState *state) {
+    if (state == NULL) return 0.0f;
+    double retained = 0.0;
+    double total = 0.0;
+    for (unsigned int channel = 0U;
+         channel < state->reconstruction_channels;
+         channel++) {
+        const StftReconstructionJob *job =
+            channel == 0U ? &state->adaptive_stft_job
+                          : &state->adaptive_stft_job_right;
+        retained += job->retained_spectral_energy;
+        total += job->total_spectral_energy;
+    }
+    return total > 0.0 ? (float)(retained / total) : 0.0f;
+}
+
 static void imported_full_file_unload(ImportedAnalysisState *state) {
     if (state == NULL) {
         return;
     }
+    background_task_cancel_and_join(&state->spectrogram_task);
+    background_task_cancel_and_join(&state->global_task);
+    background_task_cancel_and_join(&state->adaptive_task);
+    state->global_background_work = GLOBAL_BACKGROUND_IDLE;
     audio_clip_unload(&state->global_clip);
     audio_clip_unload(&state->adaptive_clip);
     global_fourier_job_free(&state->global_fourier_job);
+    global_fourier_job_free(
+        &state->global_fourier_job_right);
     stft_reconstruction_job_free(&state->stft_job);
     stft_reconstruction_job_free(&state->adaptive_stft_job);
-    sample_buffer_free(&state->global_reconstruction);
-    sample_buffer_free(&state->adaptive_reconstruction);
+    stft_reconstruction_job_free(
+        &state->adaptive_stft_job_right);
+    interleaved_buffer_free(&state->global_reconstruction);
+    interleaved_buffer_free(&state->adaptive_reconstruction);
+    reconstruction_cache_free(&state->reconstruction_cache);
+    reconstruction_cache_init(
+        &state->reconstruction_cache,
+        RECONSTRUCTION_CACHE_BYTE_LIMIT);
     spectrogram_data_free(&state->spectrogram);
     if (state->spectrogram_texture_loaded) {
         UnloadTexture(state->spectrogram_texture);
@@ -307,6 +531,10 @@ static void imported_full_file_unload(ImportedAnalysisState *state) {
     state->spectrogram_texture = (Texture2D){0};
     state->spectrogram_texture_loaded = false;
     state->stft_frame_count = 0U;
+    state->reconstruction_channels = 0U;
+    state->global_reconstruction_channels = 0U;
+    state->global_channel_mode =
+        GLOBAL_FOURIER_CHANNEL_MONO;
     state->global_selected_components = GLOBAL_DEFAULT_TOP_COMPONENTS;
     state->global_bin_budget_components =
         GLOBAL_DEFAULT_TOP_COMPONENTS;
@@ -324,15 +552,193 @@ static void imported_full_file_unload(ImportedAnalysisState *state) {
     state->full_file_mode = FULL_FILE_MODE_FIXED_GLOBAL;
 }
 
+static size_t global_model_estimated_bytes(
+    const ImportedAnalysisState *state,
+    GlobalFourierChannelMode channel_mode) {
+    if (state == NULL || state->audio.mono.count == 0U) {
+        return 0U;
+    }
+    int maximum_components =
+        global_fourier_available_component_count(
+            state->audio.mono.count);
+    unsigned int channel_count =
+        channel_mode == GLOBAL_FOURIER_CHANNEL_SOURCE
+            ? state->reconstruction_channels
+            : 1U;
+    return global_fourier_estimated_multichannel_analysis_bytes(
+        state->audio.mono.count,
+        maximum_components,
+        channel_count);
+}
+
+static const char *global_channel_mode_label(
+    const ImportedAnalysisState *state) {
+    return state != NULL &&
+                   state->global_reconstruction_channels > 1U
+               ? "Stereo FFT"
+               : "Mono FFT";
+}
+
+static const char *global_bin_scope(
+    const ImportedAnalysisState *state) {
+    return state != NULL &&
+                   state->global_reconstruction_channels > 1U
+               ? "padded FFT bins per channel"
+               : "padded FFT bins";
+}
+
+static bool begin_global_model_analysis(
+    ImportedAnalysisState *state,
+    GlobalFourierChannelMode requested_mode) {
+    if (state == NULL || state->audio.mono.samples == NULL ||
+        state->audio.mono.count == 0U ||
+        state->reconstruction_channels == 0U) {
+        return false;
+    }
+
+    if (state->reconstruction_channels == 1U) {
+        requested_mode = GLOBAL_FOURIER_CHANNEL_MONO;
+    }
+    unsigned int channel_count =
+        requested_mode == GLOBAL_FOURIER_CHANNEL_SOURCE
+            ? state->reconstruction_channels
+            : 1U;
+    int available_components =
+        global_fourier_available_component_count(
+            state->audio.mono.count);
+    size_t estimated_bytes =
+        global_fourier_estimated_multichannel_analysis_bytes(
+            state->audio.mono.count,
+            available_components,
+            channel_count);
+
+    background_task_cancel_and_join(&state->global_task);
+    state->global_background_work = GLOBAL_BACKGROUND_IDLE;
+    audio_clip_unload(&state->global_clip);
+    interleaved_buffer_free(&state->global_reconstruction);
+    global_fourier_job_free(&state->global_fourier_job);
+    global_fourier_job_free(
+        &state->global_fourier_job_right);
+    state->global_ready = false;
+    state->global_rendered_components = 0;
+    state->global_retained_energy = 0.0f;
+    state->global_channel_mode = requested_mode;
+    state->global_reconstruction_channels = channel_count;
+
+    if (available_components <= 0 || estimated_bytes == 0U) {
+        snprintf(state->global_status,
+                 sizeof(state->global_status),
+                 "Could not determine the whole-file FFT memory requirement.");
+        return false;
+    }
+    if (estimated_bytes >
+        state->global_model_memory_limit_bytes) {
+        double estimated_megabytes =
+            (double)estimated_bytes / (1024.0 * 1024.0);
+        double limit_megabytes =
+            (double)state->global_model_memory_limit_bytes /
+            (1024.0 * 1024.0);
+        if (channel_count > 1U) {
+            snprintf(
+                state->global_status,
+                sizeof(state->global_status),
+                "Stereo %.0f MB > %.0f MB limit. See Settings.",
+                estimated_megabytes,
+                limit_megabytes);
+        } else {
+            snprintf(
+                state->global_status,
+                sizeof(state->global_status),
+                "Mono %.0f MB > %.0f MB limit. See Settings.",
+                estimated_megabytes,
+                limit_megabytes);
+        }
+        return false;
+    }
+
+    bool started = true;
+    if (requested_mode == GLOBAL_FOURIER_CHANNEL_MONO) {
+        started = global_fourier_job_begin_analysis(
+            &state->global_fourier_job,
+            &state->audio.mono,
+            available_components);
+    } else {
+        for (unsigned int channel = 0U;
+             channel < channel_count;
+             channel++) {
+            GlobalFourierJob *job =
+                global_job_for_channel(state, channel);
+            started =
+                global_fourier_job_begin_analysis_strided(
+                    job,
+                    state->audio.interleaved.samples + channel,
+                    state->audio.interleaved.frame_count,
+                    state->audio.interleaved.channel_count,
+                    state->audio.interleaved.sample_rate,
+                    available_components);
+            if (!started) break;
+        }
+    }
+    if (!started) {
+        global_fourier_job_free(&state->global_fourier_job);
+        global_fourier_job_free(
+            &state->global_fourier_job_right);
+        snprintf(state->global_status,
+                 sizeof(state->global_status),
+                 "Could not allocate the %s model.",
+                 global_channel_mode_label(state));
+        return false;
+    }
+
+    state->global_background_work =
+        GLOBAL_BACKGROUND_ANALYSIS;
+    if (!background_task_start(&state->global_task,
+                               global_background_run,
+                               state)) {
+        state->global_background_work =
+            GLOBAL_BACKGROUND_IDLE;
+        global_fourier_job_free(&state->global_fourier_job);
+        global_fourier_job_free(
+            &state->global_fourier_job_right);
+        snprintf(state->global_status,
+                 sizeof(state->global_status),
+                 "Could not start the background Fourier worker.");
+        return false;
+    }
+    snprintf(
+        state->global_status,
+        sizeof(state->global_status),
+        channel_count > 1U
+            ? "Ranking %d one-sided bins per channel in Stereo FFT..."
+            : "Ranking %d one-sided bins in Mono FFT...",
+        available_components);
+    return true;
+}
+
 static bool start_full_file_analysis(ImportedAnalysisState *state) {
-    if (state == NULL || state->audio.mono.samples == NULL || state->audio.mono.count == 0U) {
+    if (state == NULL || state->audio.mono.samples == NULL ||
+        state->audio.mono.count == 0U ||
+        state->audio.interleaved.samples == NULL ||
+        state->audio.interleaved.frame_count == 0U ||
+        state->audio.interleaved.channel_count == 0U ||
+        state->audio.interleaved.channel_count >
+            RECONSTRUCTION_CHANNEL_LIMIT) {
         return false;
     }
 
     if (state->audio.duration_seconds > STFT_MAX_DURATION_SECONDS) {
+        background_task_cancel_and_join(
+            &state->spectrogram_task);
+        background_task_cancel_and_join(&state->global_task);
+        background_task_cancel_and_join(
+            &state->adaptive_task);
         global_fourier_job_free(&state->global_fourier_job);
+        global_fourier_job_free(
+            &state->global_fourier_job_right);
         stft_reconstruction_job_free(&state->stft_job);
         stft_reconstruction_job_free(&state->adaptive_stft_job);
+        stft_reconstruction_job_free(
+            &state->adaptive_stft_job_right);
         snprintf(state->global_status,
                  sizeof(state->global_status),
                  "This file is longer than the 10-minute reconstruction safety limit.");
@@ -342,13 +748,27 @@ static bool start_full_file_analysis(ImportedAnalysisState *state) {
         return false;
     }
 
+    background_task_cancel_and_join(&state->spectrogram_task);
+    background_task_cancel_and_join(&state->global_task);
+    background_task_cancel_and_join(&state->adaptive_task);
+    state->global_background_work = GLOBAL_BACKGROUND_IDLE;
     audio_clip_unload(&state->global_clip);
     audio_clip_unload(&state->adaptive_clip);
-    sample_buffer_free(&state->global_reconstruction);
-    sample_buffer_free(&state->adaptive_reconstruction);
+    interleaved_buffer_free(&state->global_reconstruction);
+    interleaved_buffer_free(&state->adaptive_reconstruction);
+    reconstruction_cache_free(&state->reconstruction_cache);
+    reconstruction_cache_init(
+        &state->reconstruction_cache,
+        RECONSTRUCTION_CACHE_BYTE_LIMIT);
     global_fourier_job_free(&state->global_fourier_job);
+    global_fourier_job_free(
+        &state->global_fourier_job_right);
     stft_reconstruction_job_free(&state->stft_job);
     stft_reconstruction_job_free(&state->adaptive_stft_job);
+    stft_reconstruction_job_free(
+        &state->adaptive_stft_job_right);
+    state->reconstruction_channels =
+        state->audio.interleaved.channel_count;
     state->global_ready = false;
     state->global_rendered_components = 0;
     state->global_retained_energy = 0.0f;
@@ -386,24 +806,31 @@ static bool start_full_file_analysis(ImportedAnalysisState *state) {
                                       STFT_SPECTROGRAM_TIME_BINS,
                                       STFT_SPECTROGRAM_FREQUENCY_BINS,
                                       maximum_frequency);
-    if (!global_fourier_job_begin_analysis(&state->global_fourier_job,
-                                           &state->audio.mono,
-                                           available_global_components)) {
-        stft_reconstruction_job_free(&state->stft_job);
-        snprintf(state->global_status,
-                 sizeof(state->global_status),
-                 "Could not allocate the whole-file Fourier analysis.");
-        return false;
-    }
     state->stft_frame_count =
         spectrogram_started ? state->stft_job.frame_count : 0U;
-    snprintf(state->global_status,
-             sizeof(state->global_status),
-             "Ranking %d one-sided bins from a zero-padded whole-file FFT...",
-             available_global_components);
+    if (spectrogram_started &&
+        !background_task_start(&state->spectrogram_task,
+                               spectrogram_background_run,
+                               state)) {
+        stft_reconstruction_job_free(&state->stft_job);
+        state->stft_frame_count = 0U;
+    }
+
+    unsigned int recommended_channels =
+        global_fourier_recommended_channel_count(
+            state->audio.mono.count,
+            available_global_components,
+            state->reconstruction_channels,
+            state->global_model_memory_limit_bytes);
+    GlobalFourierChannelMode initial_channel_mode =
+        recommended_channels > 1U
+            ? GLOBAL_FOURIER_CHANNEL_SOURCE
+            : GLOBAL_FOURIER_CHANNEL_MONO;
+    begin_global_model_analysis(
+        state, initial_channel_mode);
     snprintf(state->adaptive_status,
              sizeof(state->adaptive_status),
-             "Choose Time-varying STFT to build a per-frame reconstruction.");
+             "Choose Time-varying STFT to build a cached per-frame reconstruction.");
     return true;
 }
 
@@ -426,8 +853,138 @@ static void complete_spectrogram_visualization(ImportedAnalysisState *state) {
     stft_reconstruction_job_free(&state->stft_job);
 }
 
+static ReconstructionCacheKey reconstruction_key(
+    ReconstructionCacheMode mode,
+    int component_count,
+    unsigned int channel_count) {
+    ReconstructionCacheKey key = {
+        .mode = mode,
+        .component_count = component_count,
+        .channel_count = channel_count,
+    };
+    return key;
+}
+
+static void cache_current_global_reconstruction(
+    ImportedAnalysisState *state) {
+    if (state == NULL ||
+        state->global_reconstruction.samples == NULL ||
+        state->global_rendered_components <= 0) {
+        return;
+    }
+    audio_clip_unload(&state->global_clip);
+    ReconstructionCacheKey key = reconstruction_key(
+        RECONSTRUCTION_CACHE_GLOBAL,
+        state->global_rendered_components,
+        state->global_reconstruction_channels);
+    if (!reconstruction_cache_store_move(
+            &state->reconstruction_cache,
+            key,
+            &state->global_reconstruction,
+            state->global_retained_energy)) {
+        interleaved_buffer_free(
+            &state->global_reconstruction);
+    }
+    state->global_ready = false;
+}
+
+static bool restore_global_reconstruction_from_cache(
+    ImportedAnalysisState *state,
+    int component_count,
+    bool audio_ready) {
+    if (state == NULL) return false;
+    ReconstructionCacheKey key = reconstruction_key(
+        RECONSTRUCTION_CACHE_GLOBAL,
+        component_count,
+        state->global_reconstruction_channels);
+    float retained_energy = 0.0f;
+    if (!reconstruction_cache_take(
+            &state->reconstruction_cache,
+            key,
+            &state->global_reconstruction,
+            &retained_energy)) {
+        return false;
+    }
+    bool playback_ready =
+        !audio_ready ||
+        audio_clip_set_interleaved(
+            &state->global_clip,
+            &state->global_reconstruction);
+    state->global_selected_components = component_count;
+    state->global_rendered_components = component_count;
+    state->global_retained_energy = retained_energy;
+    state->global_ready = true;
+    snprintf(state->global_status,
+             sizeof(state->global_status),
+             playback_ready
+                 ? "Restored %d %s instantly from cache."
+                 : "Restored %d %s from cache; playback is unavailable.",
+             component_count,
+             global_bin_scope(state));
+    return true;
+}
+
+static void cache_current_adaptive_reconstruction(
+    ImportedAnalysisState *state) {
+    if (state == NULL ||
+        state->adaptive_reconstruction.samples == NULL ||
+        state->adaptive_rendered_components <= 0) {
+        return;
+    }
+    audio_clip_unload(&state->adaptive_clip);
+    ReconstructionCacheKey key = reconstruction_key(
+        RECONSTRUCTION_CACHE_STFT,
+        state->adaptive_rendered_components,
+        state->reconstruction_channels);
+    if (!reconstruction_cache_store_move(
+            &state->reconstruction_cache,
+            key,
+            &state->adaptive_reconstruction,
+            state->adaptive_retained_energy)) {
+        interleaved_buffer_free(
+            &state->adaptive_reconstruction);
+    }
+    state->adaptive_ready = false;
+}
+
+static bool restore_adaptive_reconstruction_from_cache(
+    ImportedAnalysisState *state,
+    int component_count,
+    bool audio_ready) {
+    if (state == NULL) return false;
+    ReconstructionCacheKey key = reconstruction_key(
+        RECONSTRUCTION_CACHE_STFT,
+        component_count,
+        state->reconstruction_channels);
+    float retained_energy = 0.0f;
+    if (!reconstruction_cache_take(
+            &state->reconstruction_cache,
+            key,
+            &state->adaptive_reconstruction,
+            &retained_energy)) {
+        return false;
+    }
+    bool playback_ready =
+        !audio_ready ||
+        audio_clip_set_interleaved(
+            &state->adaptive_clip,
+            &state->adaptive_reconstruction);
+    state->adaptive_selected_components = component_count;
+    state->adaptive_rendered_components = component_count;
+    state->adaptive_retained_energy = retained_energy;
+    state->adaptive_ready = true;
+    snprintf(state->adaptive_status,
+             sizeof(state->adaptive_status),
+             playback_ready
+                 ? "Restored time-varying Top-%d per channel instantly from cache."
+                 : "Restored time-varying Top-%d per channel from cache; playback is unavailable.",
+             component_count);
+    return true;
+}
+
 static bool start_global_reconstruction(ImportedAnalysisState *state,
-                                        int top_components) {
+                                        int top_components,
+                                        bool audio_ready) {
     if (state == NULL) return false;
     if (top_components < 1) top_components = 1;
     int maximum_components =
@@ -437,33 +994,95 @@ static bool start_global_reconstruction(ImportedAnalysisState *state,
         top_components = maximum_components;
     }
     state->global_selected_components = top_components;
-    if (!state->global_fourier_job.analysis_ready) {
+    if (state->global_background_work ==
+            GLOBAL_BACKGROUND_ANALYSIS &&
+        background_task_has_work(&state->global_task)) {
         snprintf(state->global_status,
                  sizeof(state->global_status),
-                 "%d of %d padded FFT bins are queued until ranking is ready.",
+                 "%d of %d %s are queued until background ranking is ready.",
                  top_components,
-                 maximum_components);
+                 maximum_components,
+                 global_bin_scope(state));
+        return true;
+    }
+    if (background_task_has_work(&state->global_task)) {
+        background_task_cancel_and_join(&state->global_task);
+        state->global_background_work =
+            GLOBAL_BACKGROUND_IDLE;
+    }
+    if (!global_analysis_ready(state)) {
+        snprintf(state->global_status,
+                 sizeof(state->global_status),
+                 "The reusable whole-file Fourier model is not ready.");
+        return false;
+    }
+    if (state->global_ready &&
+        state->global_rendered_components == top_components &&
+        state->global_reconstruction.samples != NULL) {
+        if (state->global_selection_mode ==
+            GLOBAL_SELECTION_PADDED_FFT_BINS) {
+            snprintf(state->global_status,
+                     sizeof(state->global_status),
+                     "%d of %d %s (%.2f%%) retain %.3f%% combined energy.",
+                     top_components,
+                     maximum_components,
+                     global_bin_scope(state),
+                     maximum_components > 0
+                         ? (float)top_components * 100.0f /
+                               (float)maximum_components
+                         : 0.0f,
+                     state->global_retained_energy * 100.0f);
+        }
         return true;
     }
 
-    audio_clip_unload(&state->global_clip);
-    sample_buffer_free(&state->global_reconstruction);
-    state->global_ready = false;
+    cache_current_global_reconstruction(state);
     state->global_rendered_components = 0;
     state->global_retained_energy = 0.0f;
-    if (!global_fourier_job_begin_reconstruction(
-            &state->global_fourier_job, top_components)) {
+    if (restore_global_reconstruction_from_cache(
+            state, top_components, audio_ready)) {
+        return true;
+    }
+
+    bool jobs_started = true;
+    for (unsigned int channel = 0U;
+         channel < state->global_reconstruction_channels;
+         channel++) {
+        GlobalFourierJob *job =
+            global_job_for_channel(state, channel);
+        if (job == NULL ||
+            !global_fourier_job_begin_reconstruction(
+                job, top_components)) {
+            jobs_started = false;
+            break;
+        }
+    }
+    if (!jobs_started) {
         snprintf(state->global_status,
                  sizeof(state->global_status),
-                 "Could not allocate the %d-bin whole-file reconstruction.",
-                 top_components);
+                 "Could not allocate the %d-bin %s reconstruction.",
+                 top_components,
+                 global_channel_mode_label(state));
+        return false;
+    }
+    state->global_background_work =
+        GLOBAL_BACKGROUND_RECONSTRUCTION;
+    if (!background_task_start(&state->global_task,
+                               global_background_run,
+                               state)) {
+        state->global_background_work =
+            GLOBAL_BACKGROUND_IDLE;
+        snprintf(state->global_status,
+                 sizeof(state->global_status),
+                 "Could not start the background reconstruction worker.");
         return false;
     }
     snprintf(state->global_status,
              sizeof(state->global_status),
-             "Reconstructing %d of %d padded FFT bins (%.2f%% of bins)...",
+             "Reconstructing %d of %d %s in the background (%.2f%%)...",
              top_components,
              maximum_components,
+             global_bin_scope(state),
              maximum_components > 0
                  ? (float)top_components * 100.0f /
                        (float)maximum_components
@@ -473,7 +1092,8 @@ static bool start_global_reconstruction(ImportedAnalysisState *state,
 
 static bool start_global_energy_reconstruction(
     ImportedAnalysisState *state,
-    float retained_energy_target) {
+    float retained_energy_target,
+    bool audio_ready) {
     if (state == NULL) return false;
     if (retained_energy_target < 0.0001f) {
         retained_energy_target = 0.0001f;
@@ -484,18 +1104,40 @@ static bool start_global_energy_reconstruction(
     state->global_selected_energy_target =
         retained_energy_target;
 
-    if (!state->global_fourier_job.analysis_ready) {
+    if (state->global_background_work ==
+            GLOBAL_BACKGROUND_ANALYSIS &&
+        background_task_has_work(&state->global_task)) {
         snprintf(state->global_status,
                  sizeof(state->global_status),
                  "%.2f%% spectral energy is queued until the padded FFT ranking is ready.",
                  retained_energy_target * 100.0f);
         return true;
     }
+    if (background_task_has_work(&state->global_task)) {
+        background_task_cancel_and_join(&state->global_task);
+        state->global_background_work =
+            GLOBAL_BACKGROUND_IDLE;
+    }
+    if (!global_analysis_ready(state)) {
+        snprintf(state->global_status,
+                 sizeof(state->global_status),
+                 "The reusable whole-file Fourier model is not ready.");
+        return false;
+    }
 
-    int resolved_components =
-        global_fourier_job_component_count_for_energy(
-            &state->global_fourier_job,
-            retained_energy_target);
+    int resolved_components = 0;
+    for (unsigned int channel = 0U;
+         channel < state->global_reconstruction_channels;
+         channel++) {
+        GlobalFourierJob *job =
+            global_job_for_channel(state, channel);
+        int channel_components =
+            global_fourier_job_component_count_for_energy(
+                job, retained_energy_target);
+        if (channel_components > resolved_components) {
+            resolved_components = channel_components;
+        }
+    }
     if (resolved_components <= 0) {
         snprintf(state->global_status,
                  sizeof(state->global_status),
@@ -503,14 +1145,25 @@ static bool start_global_energy_reconstruction(
         return false;
     }
     if (!start_global_reconstruction(
-            state, resolved_components)) {
+            state, resolved_components, audio_ready)) {
         return false;
     }
-    snprintf(state->global_status,
-             sizeof(state->global_status),
-             "Targeting %.2f%% spectral energy with the smallest set: %d padded FFT bins...",
-             retained_energy_target * 100.0f,
-             resolved_components);
+    if (state->global_ready) {
+        snprintf(state->global_status,
+                 sizeof(state->global_status),
+                 "%.2f%% energy target uses %d %s and retains %.3f%% combined energy.",
+                 retained_energy_target * 100.0f,
+                 resolved_components,
+                 global_bin_scope(state),
+                 state->global_retained_energy * 100.0f);
+    } else {
+        snprintf(state->global_status,
+                 sizeof(state->global_status),
+                 "Targeting %.2f%% spectral energy with %d %s...",
+                 retained_energy_target * 100.0f,
+                 resolved_components,
+                 global_bin_scope(state));
+    }
     return true;
 }
 
@@ -518,34 +1171,61 @@ static void complete_global_reconstruction(ImportedAnalysisState *state,
                                            bool audio_ready) {
     int rendered_components =
         state->global_fourier_job.rendered_component_count;
-    SampleBuffer reconstruction =
-        global_fourier_job_take_output(&state->global_fourier_job);
-    if (reconstruction.samples == NULL) {
+    SampleBuffer channels[RECONSTRUCTION_CHANNEL_LIMIT] = {0};
+    bool output_ready = rendered_components > 0;
+    for (unsigned int channel = 0U;
+         channel < state->global_reconstruction_channels;
+         channel++) {
+        GlobalFourierJob *job =
+            global_job_for_channel(state, channel);
+        channels[channel] =
+            global_fourier_job_take_output(job);
+        if (channels[channel].samples == NULL) {
+            output_ready = false;
+        }
+    }
+    InterleavedBuffer reconstruction = {0};
+    if (output_ready) {
+        output_ready = interleave_sample_buffers(
+            channels,
+            state->global_reconstruction_channels,
+            &reconstruction);
+    }
+    for (unsigned int channel = 0U;
+         channel < state->global_reconstruction_channels;
+         channel++) {
+        sample_buffer_free(&channels[channel]);
+    }
+    if (!output_ready || reconstruction.samples == NULL) {
+        interleaved_buffer_free(&reconstruction);
         state->global_ready = false;
         snprintf(state->global_status,
                  sizeof(state->global_status),
-                 "The padded-FFT-bin reconstruction did not produce audio.");
+                 "The %s reconstruction did not produce audio.",
+                 global_channel_mode_label(state));
         return;
     }
 
     audio_clip_unload(&state->global_clip);
-    sample_buffer_free(&state->global_reconstruction);
+    interleaved_buffer_free(&state->global_reconstruction);
     state->global_reconstruction = reconstruction;
     bool playback_ready =
         !audio_ready ||
-        audio_clip_set_samples(&state->global_clip,
-                               &state->global_reconstruction);
+        audio_clip_set_interleaved(
+            &state->global_clip,
+            &state->global_reconstruction);
     state->global_rendered_components = rendered_components;
     state->global_selected_components = rendered_components;
     state->global_retained_energy =
-        global_fourier_job_retained_energy(&state->global_fourier_job,
-                                           rendered_components);
+        combined_global_retained_energy(
+            state, rendered_components);
     state->global_ready = true;
     if (audio_ready && !playback_ready) {
         snprintf(state->global_status,
                  sizeof(state->global_status),
-                 "The %d-bin reconstruction is ready for export, but playback could not be loaded.",
-                 rendered_components);
+                 "The %d-bin %s reconstruction is ready for export, but playback could not be loaded.",
+                 rendered_components,
+                 global_channel_mode_label(state));
     } else {
         int maximum_components =
             state->global_fourier_job.maximum_component_count;
@@ -553,17 +1233,19 @@ static void complete_global_reconstruction(ImportedAnalysisState *state,
             GLOBAL_SELECTION_SPECTRAL_ENERGY) {
             snprintf(state->global_status,
                      sizeof(state->global_status),
-                     "%.2f%% energy target resolved to %d padded bins; actual retained energy %.3f%%.",
+                     "%.2f%% energy target resolved to %d %s; retained energy %.3f%%.",
                      state->global_selected_energy_target *
                          100.0f,
                      rendered_components,
+                     global_bin_scope(state),
                      state->global_retained_energy * 100.0f);
         } else {
             snprintf(state->global_status,
                      sizeof(state->global_status),
-                     "%d of %d padded FFT bins (%.2f%%) retain %.3f%% of spectral energy.",
+                     "%d of %d %s (%.2f%%) retain %.3f%% of spectral energy.",
                      rendered_components,
                      maximum_components,
+                     global_bin_scope(state),
                      maximum_components > 0
                          ? (float)rendered_components *
                                100.0f /
@@ -575,9 +1257,12 @@ static void complete_global_reconstruction(ImportedAnalysisState *state,
 }
 
 static bool start_adaptive_reconstruction(ImportedAnalysisState *state,
-                                          int top_components) {
-    if (state == NULL || state->audio.mono.samples == NULL ||
-        state->audio.mono.count == 0U) {
+                                          int top_components,
+                                          bool audio_ready) {
+    if (state == NULL ||
+        state->audio.interleaved.samples == NULL ||
+        state->audio.interleaved.frame_count == 0U ||
+        state->reconstruction_channels == 0U) {
         return false;
     }
     if (top_components < 1) top_components = 1;
@@ -585,31 +1270,68 @@ static bool start_adaptive_reconstruction(ImportedAnalysisState *state,
         top_components = STFT_MAX_TOP_COMPONENTS;
     }
 
-    audio_clip_unload(&state->adaptive_clip);
-    sample_buffer_free(&state->adaptive_reconstruction);
+    if (background_task_has_work(&state->adaptive_task)) {
+        background_task_cancel_and_join(&state->adaptive_task);
+    }
+    if (state->adaptive_ready &&
+        state->adaptive_rendered_components == top_components &&
+        state->adaptive_reconstruction.samples != NULL) {
+        return true;
+    }
+
+    cache_current_adaptive_reconstruction(state);
     stft_reconstruction_job_free(&state->adaptive_stft_job);
+    stft_reconstruction_job_free(
+        &state->adaptive_stft_job_right);
     state->adaptive_selected_components = top_components;
     state->adaptive_rendered_components = 0;
     state->adaptive_retained_energy = 0.0f;
     state->adaptive_ready = false;
-    if (!stft_reconstruction_job_begin(&state->adaptive_stft_job,
-                                       &state->audio.mono,
-                                       STFT_WINDOW_SIZE,
-                                       STFT_HOP_SIZE,
-                                       top_components,
-                                       false,
-                                       0U,
-                                       0U,
-                                       0.0f)) {
+    if (restore_adaptive_reconstruction_from_cache(
+            state, top_components, audio_ready)) {
+        return true;
+    }
+
+    bool jobs_started = true;
+    for (unsigned int channel = 0U;
+         channel < state->reconstruction_channels;
+         channel++) {
+        StftReconstructionJob *job =
+            adaptive_job_for_channel(state, channel);
+        jobs_started =
+            stft_reconstruction_job_begin_strided(
+                job,
+                state->audio.interleaved.samples + channel,
+                state->audio.interleaved.frame_count,
+                state->audio.interleaved.channel_count,
+                state->audio.interleaved.sample_rate,
+                STFT_WINDOW_SIZE,
+                STFT_HOP_SIZE,
+                top_components,
+                false,
+                0U,
+                0U,
+                0.0f);
+        if (!jobs_started) break;
+    }
+    if (!jobs_started) {
         snprintf(state->adaptive_status,
                  sizeof(state->adaptive_status),
-                 "Could not allocate the time-varying Top-%d reconstruction.",
+                 "Could not allocate the time-varying Top-%d-per-channel reconstruction.",
                  top_components);
+        return false;
+    }
+    if (!background_task_start(&state->adaptive_task,
+                               adaptive_background_run,
+                               state)) {
+        snprintf(state->adaptive_status,
+                 sizeof(state->adaptive_status),
+                 "Could not start the background STFT worker.");
         return false;
     }
     snprintf(state->adaptive_status,
              sizeof(state->adaptive_status),
-             "Selecting %d new frequency components in every STFT frame...",
+             "Selecting %d components per channel in every STFT frame in the background...",
              top_components);
     return true;
 }
@@ -619,41 +1341,68 @@ static void complete_adaptive_reconstruction(ImportedAnalysisState *state,
     int rendered_components =
         state->adaptive_stft_job.top_component_count;
     float retained_energy =
-        stft_reconstruction_job_retained_energy(
-            &state->adaptive_stft_job);
-    SampleBuffer reconstruction =
-        stft_reconstruction_job_take_output(
-            &state->adaptive_stft_job);
-    if (reconstruction.samples == NULL) {
+        combined_adaptive_retained_energy(state);
+    SampleBuffer channels[RECONSTRUCTION_CHANNEL_LIMIT] = {0};
+    bool output_ready = rendered_components > 0;
+    for (unsigned int channel = 0U;
+         channel < state->reconstruction_channels;
+         channel++) {
+        StftReconstructionJob *job =
+            adaptive_job_for_channel(state, channel);
+        channels[channel] =
+            stft_reconstruction_job_take_output(job);
+        if (channels[channel].samples == NULL) {
+            output_ready = false;
+        }
+    }
+    InterleavedBuffer reconstruction = {0};
+    if (output_ready) {
+        output_ready = interleave_sample_buffers(
+            channels,
+            state->reconstruction_channels,
+            &reconstruction);
+    }
+    for (unsigned int channel = 0U;
+         channel < state->reconstruction_channels;
+         channel++) {
+        sample_buffer_free(&channels[channel]);
+    }
+    if (!output_ready || reconstruction.samples == NULL) {
+        interleaved_buffer_free(&reconstruction);
         state->adaptive_ready = false;
         stft_reconstruction_job_free(&state->adaptive_stft_job);
+        stft_reconstruction_job_free(
+            &state->adaptive_stft_job_right);
         snprintf(state->adaptive_status,
                  sizeof(state->adaptive_status),
-                 "The time-varying reconstruction did not produce audio.");
+                 "The stereo-aware time-varying reconstruction did not produce audio.");
         return;
     }
 
     audio_clip_unload(&state->adaptive_clip);
-    sample_buffer_free(&state->adaptive_reconstruction);
+    interleaved_buffer_free(&state->adaptive_reconstruction);
     state->adaptive_reconstruction = reconstruction;
     bool playback_ready =
         !audio_ready ||
-        audio_clip_set_samples(&state->adaptive_clip,
-                               &state->adaptive_reconstruction);
+        audio_clip_set_interleaved(
+            &state->adaptive_clip,
+            &state->adaptive_reconstruction);
     state->adaptive_selected_components = rendered_components;
     state->adaptive_rendered_components = rendered_components;
     state->adaptive_retained_energy = retained_energy;
     state->adaptive_ready = true;
     stft_reconstruction_job_free(&state->adaptive_stft_job);
+    stft_reconstruction_job_free(
+        &state->adaptive_stft_job_right);
     if (audio_ready && !playback_ready) {
         snprintf(state->adaptive_status,
                  sizeof(state->adaptive_status),
-                 "Time-varying Top-%d is ready for export, but playback could not be loaded.",
+                 "Time-varying Top-%d per channel is ready for export, but playback could not be loaded.",
                  rendered_components);
     } else {
         snprintf(state->adaptive_status,
                  sizeof(state->adaptive_status),
-                 "Time-varying Top-%d ready: %.1f%% per-frame spectral energy retained.",
+                 "Time-varying Top-%d per channel ready: %.1f%% combined per-frame energy retained.",
                  rendered_components,
                  retained_energy * 100.0f);
     }
@@ -670,8 +1419,8 @@ static bool active_full_file_processing(
     const ImportedAnalysisState *state) {
     return state != NULL &&
            (state->full_file_mode == FULL_FILE_MODE_FIXED_GLOBAL
-                ? state->global_fourier_job.active
-                : state->adaptive_stft_job.active);
+                ? background_task_has_work(&state->global_task)
+                : background_task_has_work(&state->adaptive_task));
 }
 
 static AudioClip *active_full_file_clip(ImportedAnalysisState *state) {
@@ -681,7 +1430,7 @@ static AudioClip *active_full_file_clip(ImportedAnalysisState *state) {
                : &state->adaptive_clip;
 }
 
-static SampleBuffer *active_full_file_buffer(
+static InterleavedBuffer *active_full_file_buffer(
     ImportedAnalysisState *state) {
     if (state == NULL) return NULL;
     return state->full_file_mode == FULL_FILE_MODE_FIXED_GLOBAL
@@ -717,18 +1466,20 @@ static void restore_full_file_idle_status(
                 GLOBAL_SELECTION_SPECTRAL_ENERGY) {
                 snprintf(state->global_status,
                          sizeof(state->global_status),
-                         "%.2f%% energy target uses %d padded FFT bins and retains %.3f%% energy.",
+                         "%.2f%% energy target uses %d %s and retains %.3f%% combined energy.",
                          state->global_selected_energy_target *
                              100.0f,
                          state->global_rendered_components,
+                         global_bin_scope(state),
                          state->global_retained_energy *
                              100.0f);
             } else {
                 snprintf(state->global_status,
                          sizeof(state->global_status),
-                         "%d of %d padded FFT bins (%.2f%%) retain %.3f%% spectral energy.",
+                         "%d of %d %s (%.2f%%) retain %.3f%% combined energy.",
                          state->global_rendered_components,
                          maximum_components,
+                         global_bin_scope(state),
                          maximum_components > 0
                              ? (float)state
                                        ->global_rendered_components *
@@ -745,7 +1496,7 @@ static void restore_full_file_idle_status(
     if (state->adaptive_ready) {
         snprintf(state->adaptive_status,
                  sizeof(state->adaptive_status),
-                 "Time-varying Top-%d ready: %.1f%% per-frame spectral energy retained.",
+                 "Time-varying Top-%d per channel ready: %.1f%% combined per-frame energy retained.",
                  state->adaptive_rendered_components,
                  state->adaptive_retained_energy * 100.0f);
     }
@@ -754,69 +1505,98 @@ static void restore_full_file_idle_status(
 static void advance_full_file_analysis(ImportedAnalysisState *state,
                                        bool audio_ready) {
     if (state == NULL) return;
-    double deadline = GetTime() + FULL_FILE_WORK_SLICE_SECONDS;
-    while ((state->stft_job.active ||
-            state->global_fourier_job.active ||
-            state->adaptive_stft_job.active) &&
-           GetTime() < deadline) {
-        if (state->stft_job.active) {
-            stft_reconstruction_job_process(&state->stft_job, 1U);
-        }
-        if (state->global_fourier_job.active) {
-            global_fourier_job_process(&state->global_fourier_job,
-                                       GLOBAL_FOURIER_OPERATION_BATCH);
-        }
-        if (state->adaptive_stft_job.active) {
-            stft_reconstruction_job_process(
-                &state->adaptive_stft_job, 1U);
+    if (background_task_is_complete(
+            &state->spectrogram_task)) {
+        background_task_join(&state->spectrogram_task);
+        if (state->stft_job.complete) {
+            complete_spectrogram_visualization(state);
+        } else {
+            stft_reconstruction_job_free(&state->stft_job);
         }
     }
 
-    if (state->stft_job.complete) {
-        complete_spectrogram_visualization(state);
-    }
-    if (!state->global_fourier_job.active &&
-        state->global_fourier_job.phase == GLOBAL_FOURIER_ANALYSIS_READY) {
-        if (state->global_selection_mode ==
-            GLOBAL_SELECTION_SPECTRAL_ENERGY) {
-            start_global_energy_reconstruction(
-                state,
-                state->global_selected_energy_target);
+    if (background_task_is_complete(&state->global_task)) {
+        GlobalBackgroundWork completed_work =
+            state->global_background_work;
+        background_task_join(&state->global_task);
+        state->global_background_work =
+            GLOBAL_BACKGROUND_IDLE;
+        if (completed_work == GLOBAL_BACKGROUND_ANALYSIS) {
+            if (!global_analysis_ready(state)) {
+                snprintf(state->global_status,
+                         sizeof(state->global_status),
+                         "Background whole-file Fourier analysis did not complete.");
+            } else if (state->global_selection_mode ==
+                       GLOBAL_SELECTION_SPECTRAL_ENERGY) {
+                start_global_energy_reconstruction(
+                    state,
+                    state->global_selected_energy_target,
+                    audio_ready);
             } else {
                 start_global_reconstruction(
                     state,
-                    state->global_bin_budget_components);
+                    state->global_bin_budget_components,
+                    audio_ready);
+            }
+        } else if (
+            completed_work ==
+            GLOBAL_BACKGROUND_RECONSTRUCTION) {
+            if (global_reconstruction_ready(state)) {
+                complete_global_reconstruction(
+                    state, audio_ready);
+            } else {
+                snprintf(state->global_status,
+                         sizeof(state->global_status),
+                         "Background whole-file reconstruction did not complete.");
+            }
         }
     }
-    if (state->global_fourier_job.reconstruction_ready) {
-        complete_global_reconstruction(state, audio_ready);
-    }
-    if (state->adaptive_stft_job.complete) {
-        complete_adaptive_reconstruction(state, audio_ready);
+
+    if (background_task_is_complete(&state->adaptive_task)) {
+        background_task_join(&state->adaptive_task);
+        bool complete = state->adaptive_stft_job.complete;
+        if (state->reconstruction_channels > 1U) {
+            complete =
+                complete &&
+                state->adaptive_stft_job_right.complete;
+        }
+        if (complete) {
+            complete_adaptive_reconstruction(
+                state, audio_ready);
+        } else {
+            snprintf(state->adaptive_status,
+                     sizeof(state->adaptive_status),
+                     "Background time-varying reconstruction did not complete.");
+        }
     }
 
-    if (state->global_fourier_job.active) {
+    if (background_task_has_work(&state->global_task)) {
         int percent =
-            (int)(global_fourier_job_progress(
-                      &state->global_fourier_job) *
+            (int)(background_task_progress(
+                      &state->global_task) *
                       100.0f +
                   0.5f);
         snprintf(state->global_status,
                  sizeof(state->global_status),
-                 "%s... %d%%",
-                 global_fourier_job_phase_label(
-                     &state->global_fourier_job),
+                 state->global_background_work ==
+                         GLOBAL_BACKGROUND_ANALYSIS
+                     ? "Building the %s model in the background... %d%%"
+                     : "Reconstructing %s in the background... %d%%",
+                 state->global_background_work ==
+                         GLOBAL_BACKGROUND_ANALYSIS
+                     ? global_channel_mode_label(state)
+                     : global_bin_scope(state),
                  percent);
     }
-    if (state->adaptive_stft_job.active) {
+    if (background_task_has_work(&state->adaptive_task)) {
         int percent =
-            (int)(stft_reconstruction_job_progress(
-                      &state->adaptive_stft_job) *
+            (int)(background_task_progress(
+                      &state->adaptive_task) *
                       100.0f +
                   0.5f);
         snprintf(state->adaptive_status,
                  sizeof(state->adaptive_status),
-                 "Building time-varying Top-%d across every frame... %d%%",
+                 "Building time-varying Top-%d per channel in the background... %d%%",
                  state->adaptive_stft_job.top_component_count,
                  percent);
     }
@@ -947,6 +1727,33 @@ static bool export_samples_with_dialog(void *window_handle,
     }
 
     snprintf(status, status_size, "Saved %s", GetFileName(export_path));
+    return true;
+}
+
+static bool export_interleaved_with_dialog(
+    void *window_handle,
+    const char *suggested_name,
+    const InterleavedBuffer *buffer,
+    char *status,
+    size_t status_size) {
+    char export_path[IMPORT_PATH_CAPACITY] = {0};
+    if (!windows_app_choose_wav_save_path(
+            window_handle,
+            suggested_name,
+            export_path,
+            sizeof(export_path))) {
+        snprintf(status, status_size, "Export canceled.");
+        return false;
+    }
+    if (!export_interleaved_to_wav(export_path, buffer)) {
+        snprintf(status,
+                 status_size,
+                 "Could not write the WAV to the selected location.");
+        return false;
+    }
+
+    snprintf(status, status_size, "Saved %s",
+             GetFileName(export_path));
     return true;
 }
 
@@ -1120,6 +1927,10 @@ static bool load_imported_analysis(
     state->audio = loaded;
     snprintf(state->path, sizeof(state->path), "%s", path);
     snprintf(state->file_name, sizeof(state->file_name), "%s", GetFileName(path));
+    if (g_theme != NULL) {
+        theme_ensure_text_coverage(
+            g_theme, state->file_name);
+    }
     state->waveform_bin_count = summarize_waveform(state->audio.mono.samples,
                                                    state->audio.mono.count,
                                                    state->waveform_minimums,
@@ -1128,10 +1939,25 @@ static bool load_imported_analysis(
     state->region_duration_seconds = fminf(1.0f, state->audio.duration_seconds);
     state->region_start_seconds =
         fmaxf(0.0f, (state->audio.duration_seconds - state->region_duration_seconds) * 0.5f);
-    if (audio_ready && !audio_clip_set_samples(&state->full_clip, &state->audio.mono)) {
+    if (audio_ready &&
+        !audio_clip_set_interleaved(
+            &state->full_clip,
+            &state->audio.interleaved)) {
         snprintf(state->status, sizeof(state->status), "Loaded audio, but full-file playback is unavailable.");
+    } else if (state->audio.source_channels == 2U &&
+               state->audio.interleaved.channel_count == 2U) {
+        snprintf(state->status,
+                 sizeof(state->status),
+                 "Loaded stereo audio; pitch and visualization use a mono reference.");
+    } else if (state->audio.source_channels > 2U) {
+        snprintf(state->status,
+                 sizeof(state->status),
+                 "Loaded %u-channel audio and downmixed it to mono for analysis and reconstruction.",
+                 state->audio.source_channels);
     } else {
-        snprintf(state->status, sizeof(state->status), "Loaded and converted to mono for analysis.");
+        snprintf(state->status,
+                 sizeof(state->status),
+                 "Loaded mono audio for analysis and reconstruction.");
     }
     analyze_imported_region(state, audio_ready);
     start_full_file_analysis(state);
@@ -1382,6 +2208,7 @@ int main(void) {
     AudioAnalysisActions pending_analysis_actions = {0};
     HarmonicLabActions pending_lab_actions = {0};
     SpectrogramActions pending_spectrogram_actions = {0};
+    SettingsActions pending_settings_actions = {0};
     PlaybackTarget analysis_playback = PLAYBACK_ANALYSIS_FULL;
     PlaybackTarget lab_playback = PLAYBACK_LAB_ORIGINAL;
     PlaybackTarget spectrogram_playback = PLAYBACK_SPECTROGRAM_ORIGINAL;
@@ -1405,6 +2232,27 @@ int main(void) {
         if (IsKeyPressed(KEY_THREE)) active_page = APP_PAGE_ANALYSIS;
         if (IsKeyPressed(KEY_FOUR)) active_page = APP_PAGE_HARMONIC_LAB;
         if (IsKeyPressed(KEY_FIVE)) active_page = APP_PAGE_SPECTROGRAM;
+
+        if (pending_settings_actions
+                .select_global_memory_limit) {
+            imported.global_model_memory_limit_bytes =
+                pending_settings_actions
+                    .global_memory_limit_bytes;
+            bool global_model_unavailable =
+                !global_analysis_ready(&imported) &&
+                !imported.global_ready &&
+                !background_task_has_work(
+                    &imported.global_task);
+            if (imported.audio.mono.samples != NULL &&
+                imported.full_file_mode ==
+                    FULL_FILE_MODE_FIXED_GLOBAL &&
+                global_model_unavailable) {
+                begin_global_model_analysis(
+                    &imported,
+                    imported.global_channel_mode);
+            }
+        }
+        pending_settings_actions = (SettingsActions){0};
 
         if (pending_analysis_actions.choose_file) {
             char selected_path[IMPORT_PATH_CAPACITY] = {0};
@@ -1565,13 +2413,29 @@ int main(void) {
                     FULL_FILE_MODE_TIME_VARYING_STFT &&
                 imported.audio.mono.samples != NULL &&
                 !imported.adaptive_ready &&
-                !imported.adaptive_stft_job.active) {
+                !background_task_has_work(
+                    &imported.adaptive_task)) {
                 start_adaptive_reconstruction(
                     &imported,
-                    imported.adaptive_selected_components);
+                    imported.adaptive_selected_components,
+                    audio_ready);
             }
             restore_full_file_idle_status(
                 &imported, imported.full_file_mode);
+        }
+        if (pending_spectrogram_actions
+                .select_global_channel_mode &&
+            imported.audio.mono.samples != NULL) {
+            stop_all_playback(&clip, &imported);
+            cache_current_global_reconstruction(&imported);
+            begin_global_model_analysis(
+                &imported,
+                pending_spectrogram_actions
+                    .global_channel_mode);
+            imported.full_file_mode =
+                FULL_FILE_MODE_FIXED_GLOBAL;
+            spectrogram_playback =
+                PLAYBACK_SPECTROGRAM_ORIGINAL;
         }
         char *full_file_status =
             active_full_file_status(&imported);
@@ -1589,12 +2453,14 @@ int main(void) {
                     start_global_energy_reconstruction(
                         &imported,
                         imported
-                            .global_selected_energy_target);
+                            .global_selected_energy_target,
+                        audio_ready);
                 } else {
                     start_global_reconstruction(
                         &imported,
                         imported
-                            .global_bin_budget_components);
+                            .global_bin_budget_components,
+                        audio_ready);
                 }
             }
         }
@@ -1615,11 +2481,13 @@ int main(void) {
                         .top_component_count;
                 start_global_reconstruction(
                     &imported,
-                    pending_spectrogram_actions.top_component_count);
+                    pending_spectrogram_actions.top_component_count,
+                    audio_ready);
             } else {
                 start_adaptive_reconstruction(
                     &imported,
-                    pending_spectrogram_actions.top_component_count);
+                    pending_spectrogram_actions.top_component_count,
+                    audio_ready);
             }
         }
         if (pending_spectrogram_actions
@@ -1631,7 +2499,8 @@ int main(void) {
                 GLOBAL_SELECTION_SPECTRAL_ENERGY;
             start_global_energy_reconstruction(
                 &imported,
-                pending_spectrogram_actions.energy_target);
+                pending_spectrogram_actions.energy_target,
+                audio_ready);
         }
         if (pending_spectrogram_actions.play_original &&
             imported.audio.mono.samples != NULL) {
@@ -1654,14 +2523,15 @@ int main(void) {
                     FULL_FILE_MODE_FIXED_GLOBAL) {
                     snprintf(full_file_status,
                              IMPORT_TEXT_CAPACITY,
-                             "Playing %d padded FFT bins retaining %.3f%% spectral energy.",
+                             "Playing %d %s, retaining %.3f%% spectral energy.",
                              imported.global_rendered_components,
+                             global_bin_scope(&imported),
                              imported.global_retained_energy *
                                  100.0f);
                 } else {
                     snprintf(full_file_status,
                              IMPORT_TEXT_CAPACITY,
-                             "Playing Top-%d selected independently in every STFT frame.",
+                             "Playing Top-%d selected per channel in every STFT frame.",
                              imported.adaptive_rendered_components);
                 }
             } else {
@@ -1702,11 +2572,12 @@ int main(void) {
                          : "spectra-time-varying-top-%d-full.wav",
                      active_full_file_rendered_components(
                          &imported));
-            export_samples_with_dialog(GetWindowHandle(),
-                                       suggested_name,
-                                       active_full_file_buffer(&imported),
-                                       full_file_status,
-                                       IMPORT_TEXT_CAPACITY);
+            export_interleaved_with_dialog(
+                GetWindowHandle(),
+                suggested_name,
+                active_full_file_buffer(&imported),
+                full_file_status,
+                IMPORT_TEXT_CAPACITY);
         }
         pending_spectrogram_actions = (SpectrogramActions){0};
 
@@ -2038,7 +2909,11 @@ int main(void) {
                         snprintf(
                             spectrogram_player_title,
                             sizeof(spectrogram_player_title),
-                            "%.2f%% energy target / %d padded bins",
+                            imported
+                                        .global_reconstruction_channels >
+                                    1U
+                                ? "%.2f%% energy / %d bins per channel"
+                                : "%.2f%% energy / %d bins",
                             imported
                                     .global_selected_energy_target *
                                 100.0f,
@@ -2048,7 +2923,11 @@ int main(void) {
                         snprintf(
                             spectrogram_player_title,
                             sizeof(spectrogram_player_title),
-                            "%d padded FFT-bin reconstruction",
+                            imported
+                                        .global_reconstruction_channels >
+                                    1U
+                                ? "%d FFT bins per channel"
+                                : "%d FFT bins",
                             imported
                                 .global_rendered_components);
                     }
@@ -2056,7 +2935,7 @@ int main(void) {
                     snprintf(
                         spectrogram_player_title,
                         sizeof(spectrogram_player_title),
-                        "Time-varying Top-%d reconstruction",
+                        "Time-varying Top-%d per channel",
                         active_full_file_rendered_components(
                             &imported));
                 }
@@ -2085,6 +2964,12 @@ int main(void) {
                 .file_name = imported.file_name,
                 .status = active_full_file_status(&imported),
                 .sample_rate = imported.audio.mono.sample_rate,
+                .reconstruction_channels =
+                    imported.reconstruction_channels,
+                .source_reconstruction_channels =
+                    imported.reconstruction_channels,
+                .global_reconstruction_channels =
+                    imported.global_reconstruction_channels,
                 .duration_seconds = imported.audio.duration_seconds,
                 .window_size = STFT_WINDOW_SIZE,
                 .hop_size = STFT_HOP_SIZE,
@@ -2119,10 +3004,10 @@ int main(void) {
                 .progress =
                     full_file_processing
                         ? (fixed_global_mode
-                               ? global_fourier_job_progress(
-                                     &imported.global_fourier_job)
-                               : stft_reconstruction_job_progress(
-                                     &imported.adaptive_stft_job))
+                               ? background_task_progress(
+                                     &imported.global_task)
+                               : background_task_progress(
+                                     &imported.adaptive_task))
                         : (active_full_file_ready(&imported)
                                ? 1.0f
                                : 0.0f),
@@ -2136,10 +3021,22 @@ int main(void) {
                               .maximum_component_count
                         : STFT_MAX_TOP_COMPONENTS,
                 .mode = imported.full_file_mode,
+                .global_channel_mode =
+                    imported.global_channel_mode,
                 .global_selection_mode =
                     imported.global_selection_mode,
                 .selected_energy_target =
                     imported.global_selected_energy_target,
+                .global_estimated_mono_bytes =
+                    global_model_estimated_bytes(
+                        &imported,
+                        GLOBAL_FOURIER_CHANNEL_MONO),
+                .global_estimated_source_bytes =
+                    global_model_estimated_bytes(
+                        &imported,
+                        GLOBAL_FOURIER_CHANNEL_SOURCE),
+                .global_memory_limit_bytes =
+                    imported.global_model_memory_limit_bytes,
                 .maximum_frequency = maximum_frequency,
                 .spectrogram_texture = imported.spectrogram_texture_loaded
                                            ? &imported.spectrogram_texture
@@ -2148,7 +3045,16 @@ int main(void) {
             pending_spectrogram_actions =
                 draw_spectrogram_page(&theme, shell_frame.workspace, &spectrogram_view);
         } else if (active_page == APP_PAGE_SETTINGS) {
-            draw_settings_page(&theme, shell_frame.workspace, audio_ready);
+            SettingsView settings_view = {
+                .global_memory_limit_bytes =
+                    imported.global_model_memory_limit_bytes,
+            };
+            pending_settings_actions =
+                draw_settings_page(
+                    &theme,
+                    shell_frame.workspace,
+                    audio_ready,
+                    &settings_view);
         }
 
         EndDrawing();

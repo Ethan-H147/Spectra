@@ -110,6 +110,11 @@ typedef enum {
     GLOBAL_SELECTION_SPECTRAL_ENERGY
 } GlobalFourierSelectionMode;
 
+typedef enum {
+    GLOBAL_FOURIER_CHANNEL_MONO = 0,
+    GLOBAL_FOURIER_CHANNEL_SOURCE
+} GlobalFourierChannelMode;
+
 typedef struct {
     bool source_loaded;
     bool processing;
@@ -120,6 +125,9 @@ typedef struct {
     const char *file_name;
     const char *status;
     unsigned int sample_rate;
+    unsigned int reconstruction_channels;
+    unsigned int source_reconstruction_channels;
+    unsigned int global_reconstruction_channels;
     float duration_seconds;
     unsigned int window_size;
     unsigned int hop_size;
@@ -133,8 +141,12 @@ typedef struct {
     float retained_energy;
     int maximum_top_components;
     FullFileReconstructionMode mode;
+    GlobalFourierChannelMode global_channel_mode;
     GlobalFourierSelectionMode global_selection_mode;
     float selected_energy_target;
+    size_t global_estimated_mono_bytes;
+    size_t global_estimated_source_bytes;
+    size_t global_memory_limit_bytes;
     float maximum_frequency;
     const Texture2D *spectrogram_texture;
 } SpectrogramView;
@@ -148,6 +160,8 @@ typedef struct {
     bool export_reconstruction;
     bool select_mode;
     FullFileReconstructionMode mode;
+    bool select_global_channel_mode;
+    GlobalFourierChannelMode global_channel_mode;
     bool select_global_selection_mode;
     GlobalFourierSelectionMode global_selection_mode;
     bool select_top_components;
@@ -155,6 +169,15 @@ typedef struct {
     bool select_energy_target;
     float energy_target;
 } SpectrogramActions;
+
+typedef struct {
+    size_t global_memory_limit_bytes;
+} SettingsView;
+
+typedef struct {
+    bool select_global_memory_limit;
+    size_t global_memory_limit_bytes;
+} SettingsActions;
 
 AppShellFrame draw_app_shell(const AppTheme *theme,
                              AppPage active_page,
@@ -170,7 +193,10 @@ HarmonicLabActions draw_harmonic_lab_page(const AppTheme *theme,
 SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
                                          Rectangle workspace,
                                          const SpectrogramView *view);
-void draw_settings_page(AppTheme *theme, Rectangle workspace, bool audio_ready);
+SettingsActions draw_settings_page(AppTheme *theme,
+                                   Rectangle workspace,
+                                   bool audio_ready,
+                                   const SettingsView *view);
 
 void shell_draw_card(const AppTheme *theme, Rectangle bounds, const char *title, const char *subtitle);
 void shell_draw_badge(const AppTheme *theme, Rectangle bounds, const char *text, Color color);

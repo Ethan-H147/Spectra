@@ -1,13 +1,17 @@
 #include "audio/audio_import.h"
+#include "audio/audio_engine.h"
 #include "platform/file_io.h"
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#define NOGDI
+#define NOUSER
 #include <windows.h>
 #endif
 
@@ -52,6 +56,40 @@ static bool write_test_wave(const char *path) {
     return written;
 }
 
+static bool write_stereo_test_wave(const char *path) {
+    FILE *file = platform_fopen_utf8(path, "wb");
+    if (file == NULL) return false;
+
+    const int16_t samples[] = {
+        12000, -6000,
+        8000, -4000,
+        -10000, 5000,
+        0, 0,
+    };
+    const uint32_t data_size = (uint32_t)sizeof(samples);
+    fwrite("RIFF", 1U, 4U, file);
+    write_u32_le(file, 36U + data_size);
+    fwrite("WAVEfmt ", 1U, 8U, file);
+    write_u32_le(file, 16U);
+    write_u16_le(file, 1U);
+    write_u16_le(file, 2U);
+    write_u32_le(file, 8000U);
+    write_u32_le(file, 32000U);
+    write_u16_le(file, 4U);
+    write_u16_le(file, 16U);
+    fwrite("data", 1U, 4U, file);
+    write_u32_le(file, data_size);
+    for (size_t index = 0U;
+         index < sizeof(samples) / sizeof(samples[0]);
+         index++) {
+        write_u16_le(file, (uint16_t)samples[index]);
+    }
+
+    bool written = ferror(file) == 0;
+    if (fclose(file) != 0) written = false;
+    return written;
+}
+
 static bool verify_import(const char *path, bool print_details) {
     ImportedAudio audio;
     imported_audio_init(&audio);
@@ -62,7 +100,11 @@ static bool verify_import(const char *path, bool print_details) {
         fprintf(stderr, "Import failed: %s\n", error);
         return false;
     }
-    if (audio.mono.samples == NULL || audio.mono.count == 0U ||
+    if (audio.interleaved.samples == NULL ||
+        audio.interleaved.frame_count == 0U ||
+        audio.interleaved.sample_rate == 0U ||
+        audio.interleaved.channel_count == 0U ||
+        audio.mono.samples == NULL || audio.mono.count == 0U ||
         audio.mono.sample_rate == 0U || audio.source_channels == 0U) {
         fprintf(stderr, "Import returned incomplete audio metadata.\n");
         imported_audio_unload(&audio);
@@ -77,6 +119,71 @@ static bool verify_import(const char *path, bool print_details) {
     }
     imported_audio_unload(&audio);
     return true;
+}
+
+static int run_stereo_preservation_regression(void) {
+    const char path[] = "spectra-stereo-import-test.wav";
+    const char export_path[] = "spectra-stereo-export-test.wav";
+    if (!write_stereo_test_wave(path)) {
+        fprintf(stderr, "Could not create the stereo import test WAV.\n");
+        return 1;
+    }
+
+    ImportedAudio audio;
+    imported_audio_init(&audio);
+    char error[256] = {0};
+    bool loaded =
+        imported_audio_load(path, &audio, error, sizeof(error));
+    bool removed = platform_remove_utf8(path);
+    if (!loaded || !removed) {
+        fprintf(stderr,
+                "Stereo import regression failed: %s\n",
+                error);
+        imported_audio_unload(&audio);
+        return 1;
+    }
+    if (audio.source_channels != 2U ||
+        audio.interleaved.channel_count != 2U ||
+        audio.interleaved.frame_count != 4U ||
+        fabsf(audio.interleaved.samples[0] -
+              audio.interleaved.samples[1]) < 0.05f ||
+        fabsf(audio.mono.samples[0] -
+              (audio.interleaved.samples[0] +
+               audio.interleaved.samples[1]) *
+                  0.5f) > 0.0001f) {
+        fprintf(stderr,
+                "Stereo channels were not preserved alongside the mono analysis reference.\n");
+        imported_audio_unload(&audio);
+        return 1;
+    }
+    if (!export_interleaved_to_wav(
+            export_path, &audio.interleaved)) {
+        fprintf(stderr, "Stereo WAV export failed.\n");
+        imported_audio_unload(&audio);
+        return 1;
+    }
+    ImportedAudio round_trip;
+    imported_audio_init(&round_trip);
+    bool exported_loaded = imported_audio_load(
+        export_path, &round_trip, error, sizeof(error));
+    bool export_removed = platform_remove_utf8(export_path);
+    if (!exported_loaded || !export_removed ||
+        round_trip.interleaved.channel_count != 2U ||
+        round_trip.interleaved.frame_count != 4U ||
+        fabsf(round_trip.interleaved.samples[0] -
+              audio.interleaved.samples[0]) > 0.0001f ||
+        fabsf(round_trip.interleaved.samples[1] -
+              audio.interleaved.samples[1]) > 0.0001f) {
+        fprintf(stderr,
+                "Stereo WAV export did not round-trip its channels.\n");
+        imported_audio_unload(&round_trip);
+        imported_audio_unload(&audio);
+        return 1;
+    }
+    imported_audio_unload(&round_trip);
+    imported_audio_unload(&audio);
+    printf("Stereo preservation import test passed.\n");
+    return 0;
 }
 
 static int run_unicode_filename_regression(void) {
@@ -94,7 +201,7 @@ static int run_unicode_filename_regression(void) {
         return 1;
     }
     printf("Unicode-path audio import test passed.\n");
-    return 0;
+    return run_stereo_preservation_regression();
 }
 
 #if defined(_WIN32)

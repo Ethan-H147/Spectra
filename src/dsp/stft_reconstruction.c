@@ -61,14 +61,47 @@ bool stft_reconstruction_job_begin(StftReconstructionJob *job,
                                    unsigned int spectrogram_time_bins,
                                    unsigned int spectrogram_frequency_bins,
                                    float spectrogram_maximum_frequency) {
-    if (job == NULL || source == NULL || source->samples == NULL || source->count == 0U ||
-        source->sample_rate == 0U || !is_power_of_two(window_size) || hop_size == 0U ||
+    if (source == NULL) {
+        return false;
+    }
+    return stft_reconstruction_job_begin_strided(
+        job,
+        source->samples,
+        source->count,
+        1U,
+        source->sample_rate,
+        window_size,
+        hop_size,
+        top_component_count,
+        include_spectrogram,
+        spectrogram_time_bins,
+        spectrogram_frequency_bins,
+        spectrogram_maximum_frequency);
+}
+
+bool stft_reconstruction_job_begin_strided(
+    StftReconstructionJob *job,
+    const float *source_samples,
+    size_t source_count,
+    size_t source_stride,
+    unsigned int sample_rate,
+    unsigned int window_size,
+    unsigned int hop_size,
+    int top_component_count,
+    bool include_spectrogram,
+    unsigned int spectrogram_time_bins,
+    unsigned int spectrogram_frequency_bins,
+    float spectrogram_maximum_frequency) {
+    if (job == NULL || source_samples == NULL || source_count == 0U ||
+        source_stride == 0U || sample_rate == 0U ||
+        (source_count - 1U) > SIZE_MAX / source_stride ||
+        !is_power_of_two(window_size) || hop_size == 0U ||
         hop_size > window_size || top_component_count < 0 ||
         (top_component_count == 0 && !include_spectrogram)) {
         return false;
     }
-    if (source->count > SIZE_MAX / sizeof(float) ||
-        source->count > SIZE_MAX - ((size_t)hop_size - 1U)) {
+    if (source_count > SIZE_MAX / sizeof(float) ||
+        source_count > SIZE_MAX - ((size_t)hop_size - 1U)) {
         return false;
     }
 
@@ -76,12 +109,16 @@ bool stft_reconstruction_job_begin(StftReconstructionJob *job,
     if ((size_t)top_component_count > positive_bin_count) {
         top_component_count = (int)positive_bin_count;
     }
-    size_t frame_count = 1U + (source->count + (size_t)hop_size - 1U) / (size_t)hop_size;
+    size_t frame_count =
+        1U +
+        (source_count + (size_t)hop_size - 1U) /
+            (size_t)hop_size;
 
     StftReconstructionJob prepared = {
-        .source_samples = source->samples,
-        .source_count = source->count,
-        .sample_rate = source->sample_rate,
+        .source_samples = source_samples,
+        .source_count = source_count,
+        .source_stride = source_stride,
+        .sample_rate = sample_rate,
         .window_size = window_size,
         .hop_size = hop_size,
         .frame_count = frame_count,
@@ -89,20 +126,20 @@ bool stft_reconstruction_job_begin(StftReconstructionJob *job,
         .include_spectrogram = include_spectrogram,
         .active = true,
         .output = {
-            .count = source->count,
-            .sample_rate = source->sample_rate,
+            .count = source_count,
+            .sample_rate = sample_rate,
         },
     };
     prepared.window = (float *)calloc(window_size, sizeof(float));
     prepared.real = (float *)calloc(window_size, sizeof(float));
     prepared.imaginary = (float *)calloc(window_size, sizeof(float));
     if (top_component_count > 0) {
-        prepared.overlap_weights = (float *)calloc(source->count, sizeof(float));
+        prepared.overlap_weights = (float *)calloc(source_count, sizeof(float));
         prepared.kept_bins =
             (unsigned char *)calloc((size_t)window_size / 2U + 1U, sizeof(unsigned char));
         prepared.ranked_bins =
             (StftBinRank *)calloc(positive_bin_count, sizeof(StftBinRank));
-        prepared.output.samples = (float *)calloc(source->count, sizeof(float));
+        prepared.output.samples = (float *)calloc(source_count, sizeof(float));
     }
     if (prepared.window == NULL || prepared.real == NULL || prepared.imaginary == NULL ||
         (top_component_count > 0 &&
@@ -126,7 +163,7 @@ bool stft_reconstruction_job_begin(StftReconstructionJob *job,
         if ((size_t)spectrogram_time_bins > frame_count) {
             spectrogram_time_bins = (unsigned int)frame_count;
         }
-        float nyquist = (float)source->sample_rate * 0.5f;
+        float nyquist = (float)sample_rate * 0.5f;
         if (spectrogram_maximum_frequency <= 0.0f || spectrogram_maximum_frequency > nyquist) {
             spectrogram_maximum_frequency = nyquist;
         }
@@ -147,7 +184,7 @@ bool stft_reconstruction_job_begin(StftReconstructionJob *job,
         prepared.spectrogram.frequency_bins = spectrogram_frequency_bins;
         prepared.spectrogram.maximum_frequency = spectrogram_maximum_frequency;
         prepared.spectrogram.duration_seconds =
-            (float)source->count / (float)source->sample_rate;
+            (float)source_count / (float)sample_rate;
     }
 
     stft_reconstruction_job_free(job);
@@ -244,7 +281,9 @@ static void process_frame(StftReconstructionJob *job, size_t frame_index) {
         if (padded_index < padding) continue;
         size_t source_index = padded_index - padding;
         if (source_index >= job->source_count) continue;
-        job->real[index] = job->source_samples[source_index] * job->window[index];
+        job->real[index] =
+            job->source_samples[source_index * job->source_stride] *
+            job->window[index];
     }
 
     fft_radix2(job->real, job->imaginary, job->window_size);

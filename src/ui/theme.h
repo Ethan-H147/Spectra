@@ -8,8 +8,10 @@
 typedef struct {
     Font font;
     Font bold_font;
+    Font fallback_font;
     bool owns_font;
     bool owns_bold_font;
+    bool owns_fallback_font;
     float text_scale;
     Color background;
     Color panel;
@@ -22,6 +24,8 @@ typedef struct {
 } AppTheme;
 
 void theme_init(AppTheme *theme);
+bool theme_ensure_text_coverage(AppTheme *theme,
+                                const char *utf8_text);
 void theme_unload(AppTheme *theme);
 void theme_draw_text(const AppTheme *theme, const char *text, float x, float y, float size, Color color);
 void theme_draw_heading(const AppTheme *theme, const char *text, float x, float y, float size, Color color);

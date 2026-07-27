@@ -11,6 +11,13 @@ typedef struct {
 } SampleBuffer;
 
 typedef struct {
+    float *samples;
+    size_t frame_count;
+    unsigned int sample_rate;
+    unsigned int channel_count;
+} InterleavedBuffer;
+
+typedef struct {
     float attack_seconds;
     float decay_seconds;
     float sustain_level;
@@ -36,6 +43,7 @@ typedef struct {
 } Peak;
 
 void sample_buffer_free(SampleBuffer *buffer);
+void interleaved_buffer_free(InterleavedBuffer *buffer);
 void spectrum_free(Spectrum *spectrum);
 
 #endif

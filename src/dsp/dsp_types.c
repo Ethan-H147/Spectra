@@ -13,6 +13,15 @@ void sample_buffer_free(SampleBuffer *buffer) {
     buffer->sample_rate = 0;
 }
 
+void interleaved_buffer_free(InterleavedBuffer *buffer) {
+    if (buffer == NULL) {
+        return;
+    }
+
+    free(buffer->samples);
+    *buffer = (InterleavedBuffer){0};
+}
+
 void spectrum_free(Spectrum *spectrum) {
     if (spectrum == NULL) {
         return;

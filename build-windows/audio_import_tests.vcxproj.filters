@@ -4,6 +4,9 @@
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\tests\audio_import_tests.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\audio\audio_engine.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\audio\audio_import.c">
       <Filter>Source Files</Filter>
     </ClCompile>

@@ -16,6 +16,8 @@ typedef struct {
 } AudioClip;
 
 void audio_clip_init(AudioClip *clip);
+bool audio_clip_set_interleaved(AudioClip *clip,
+                                const InterleavedBuffer *buffer);
 bool audio_clip_set_samples(AudioClip *clip, const SampleBuffer *buffer);
 bool audio_clip_play(AudioClip *clip);
 bool audio_clip_pause(AudioClip *clip);
@@ -27,6 +29,8 @@ bool audio_clip_is_active(const AudioClip *clip);
 float audio_clip_position_seconds(const AudioClip *clip);
 float audio_clip_duration_seconds(const AudioClip *clip);
 void audio_clip_unload(AudioClip *clip);
+bool export_interleaved_to_wav(const char *path,
+                               const InterleavedBuffer *buffer);
 bool export_samples_to_wav(const char *path, const SampleBuffer *buffer);
 
 #endif

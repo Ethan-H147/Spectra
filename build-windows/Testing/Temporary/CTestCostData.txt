@@ -1,3 +1,5 @@
-dsp_tests 8 0.00389026
-audio_import_tests 8 0.00147099
+dsp_tests 17 0.00186165
+audio_import_tests 17 0.00675394
+ui_layout_tests 9 0.00608106
+runtime_tests 7 0.00990027
 ---

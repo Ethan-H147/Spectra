@@ -44,6 +44,81 @@ int global_fourier_available_component_count(size_t sample_count) {
                : 0;
 }
 
+size_t global_fourier_estimated_analysis_bytes(
+    size_t sample_count,
+    int maximum_component_count) {
+    uint32_t fft_size = 0U;
+    if (!next_fft_size(sample_count, &fft_size) ||
+        maximum_component_count <= 0 ||
+        (size_t)maximum_component_count >
+            SIZE_MAX / sizeof(GlobalFourierComponent)) {
+        return 0U;
+    }
+    size_t transform_bytes =
+        (size_t)fft_size * sizeof(float);
+    if (transform_bytes > SIZE_MAX / 2U) return 0U;
+    transform_bytes *= 2U;
+    size_t component_bytes =
+        (size_t)maximum_component_count *
+        sizeof(GlobalFourierComponent);
+    if (transform_bytes > SIZE_MAX - component_bytes) {
+        return 0U;
+    }
+    return transform_bytes + component_bytes;
+}
+
+size_t global_fourier_estimated_multichannel_analysis_bytes(
+    size_t sample_count,
+    int maximum_component_count,
+    unsigned int channel_count) {
+    if (channel_count == 0U) return 0U;
+    size_t per_channel_bytes =
+        global_fourier_estimated_analysis_bytes(
+            sample_count, maximum_component_count);
+    if (per_channel_bytes == 0U ||
+        per_channel_bytes >
+            SIZE_MAX / (size_t)channel_count) {
+        return 0U;
+    }
+    return per_channel_bytes * (size_t)channel_count;
+}
+
+bool global_fourier_analysis_fits_memory(
+    size_t sample_count,
+    int maximum_component_count,
+    unsigned int channel_count,
+    size_t byte_limit) {
+    size_t estimated_bytes =
+        global_fourier_estimated_multichannel_analysis_bytes(
+            sample_count,
+            maximum_component_count,
+            channel_count);
+    return estimated_bytes > 0U &&
+           (byte_limit == 0U || estimated_bytes <= byte_limit);
+}
+
+unsigned int global_fourier_recommended_channel_count(
+    size_t sample_count,
+    int maximum_component_count,
+    unsigned int source_channel_count,
+    size_t byte_limit) {
+    if (source_channel_count == 0U) return 0U;
+    if (global_fourier_analysis_fits_memory(
+            sample_count,
+            maximum_component_count,
+            source_channel_count,
+            byte_limit)) {
+        return source_channel_count;
+    }
+    return global_fourier_analysis_fits_memory(
+               sample_count,
+               maximum_component_count,
+               1U,
+               byte_limit)
+               ? 1U
+               : 0U;
+}
+
 static void free_transform_buffers(GlobalFourierJob *job) {
     free(job->real);
     free(job->imaginary);
@@ -79,14 +154,35 @@ static void begin_bit_reverse(GlobalFourierJob *job,
 bool global_fourier_job_begin_analysis(GlobalFourierJob *job,
                                        const SampleBuffer *source,
                                        int maximum_component_count) {
-    if (job == NULL || source == NULL || source->samples == NULL ||
-        source->count == 0U || source->sample_rate == 0U ||
+    if (source == NULL) {
+        return false;
+    }
+    return global_fourier_job_begin_analysis_strided(
+        job,
+        source->samples,
+        source->count,
+        1U,
+        source->sample_rate,
+        maximum_component_count);
+}
+
+bool global_fourier_job_begin_analysis_strided(
+    GlobalFourierJob *job,
+    const float *source_samples,
+    size_t source_count,
+    size_t source_stride,
+    unsigned int sample_rate,
+    int maximum_component_count) {
+    if (job == NULL || source_samples == NULL ||
+        source_count == 0U || source_stride == 0U ||
+        sample_rate == 0U ||
+        (source_count - 1U) > SIZE_MAX / source_stride ||
         maximum_component_count <= 0) {
         return false;
     }
 
     uint32_t fft_size = 0U;
-    if (!next_fft_size(source->count, &fft_size) ||
+    if (!next_fft_size(source_count, &fft_size) ||
         (size_t)fft_size > SIZE_MAX / sizeof(float)) {
         return false;
     }
@@ -100,9 +196,10 @@ bool global_fourier_job_begin_analysis(GlobalFourierJob *job,
     }
 
     GlobalFourierJob prepared = {
-        .source_samples = source->samples,
-        .source_count = source->count,
-        .sample_rate = source->sample_rate,
+        .source_samples = source_samples,
+        .source_count = source_count,
+        .source_stride = source_stride,
+        .sample_rate = sample_rate,
         .fft_size = fft_size,
         .maximum_component_count = maximum_component_count,
     };
@@ -115,9 +212,10 @@ bool global_fourier_job_begin_analysis(GlobalFourierJob *job,
         global_fourier_job_free(&prepared);
         return false;
     }
-    memcpy(prepared.real,
-           source->samples,
-           source->count * sizeof(float));
+    for (size_t index = 0U; index < source_count; index++) {
+        prepared.real[index] =
+            source_samples[index * source_stride];
+    }
 
     uint64_t total_work = (uint64_t)(fft_size - 1U) +
                           fft_butterfly_count(fft_size) +

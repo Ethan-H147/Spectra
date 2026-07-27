@@ -22,6 +22,7 @@ typedef struct {
 typedef struct {
     const float *source_samples;
     size_t source_count;
+    size_t source_stride;
     unsigned int sample_rate;
     unsigned int window_size;
     unsigned int hop_size;
@@ -57,6 +58,19 @@ bool stft_reconstruction_job_begin(StftReconstructionJob *job,
                                    unsigned int spectrogram_time_bins,
                                    unsigned int spectrogram_frequency_bins,
                                    float spectrogram_maximum_frequency);
+bool stft_reconstruction_job_begin_strided(
+    StftReconstructionJob *job,
+    const float *source_samples,
+    size_t source_count,
+    size_t source_stride,
+    unsigned int sample_rate,
+    unsigned int window_size,
+    unsigned int hop_size,
+    int top_component_count,
+    bool include_spectrogram,
+    unsigned int spectrogram_time_bins,
+    unsigned int spectrogram_frequency_bins,
+    float spectrogram_maximum_frequency);
 size_t stft_reconstruction_job_process(StftReconstructionJob *job, size_t maximum_frames);
 float stft_reconstruction_job_progress(const StftReconstructionJob *job);
 float stft_reconstruction_job_retained_energy(const StftReconstructionJob *job);

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 
 static int16_t float_to_pcm16(float value) {
     float clipped = clampf(value, -1.0f, 1.0f);
@@ -31,39 +32,64 @@ void audio_clip_init(AudioClip *clip) {
     *clip = (AudioClip){0};
 }
 
-bool audio_clip_set_samples(AudioClip *clip, const SampleBuffer *buffer) {
+bool audio_clip_set_interleaved(AudioClip *clip,
+                                const InterleavedBuffer *buffer) {
     if (clip == NULL || buffer == NULL || buffer->samples == NULL ||
-        buffer->count == 0 || buffer->sample_rate == 0U) {
+        buffer->frame_count == 0U || buffer->sample_rate == 0U ||
+        buffer->channel_count == 0U ||
+        buffer->frame_count > UINT_MAX ||
+        buffer->frame_count >
+            SIZE_MAX / (size_t)buffer->channel_count) {
         return false;
     }
 
     audio_clip_unload(clip);
 
-    int16_t *pcm = (int16_t *)calloc(buffer->count, sizeof(int16_t));
+    size_t sample_count =
+        buffer->frame_count * (size_t)buffer->channel_count;
+    if (sample_count > SIZE_MAX / sizeof(int16_t)) {
+        return false;
+    }
+    int16_t *pcm =
+        (int16_t *)calloc(sample_count, sizeof(int16_t));
     if (pcm == NULL) {
         return false;
     }
 
-    for (size_t i = 0; i < buffer->count; i++) {
+    for (size_t i = 0; i < sample_count; i++) {
         pcm[i] = float_to_pcm16(buffer->samples[i]);
     }
 
     Wave wave = {0};
-    wave.frameCount = (unsigned int)buffer->count;
+    wave.frameCount = (unsigned int)buffer->frame_count;
     wave.sampleRate = buffer->sample_rate;
     wave.sampleSize = 16;
-    wave.channels = 1;
+    wave.channels = buffer->channel_count;
     wave.data = pcm;
 
     clip->sound = LoadSoundFromWave(wave);
     clip->loaded = clip->sound.frameCount > 0;
     if (clip->loaded) {
         clip->duration_seconds =
-            (float)buffer->count / (float)buffer->sample_rate;
+            (float)buffer->frame_count /
+            (float)buffer->sample_rate;
         SetSoundVolume(clip->sound, 1.0f);
     }
     free(pcm);
     return clip->loaded;
+}
+
+bool audio_clip_set_samples(AudioClip *clip, const SampleBuffer *buffer) {
+    if (buffer == NULL) {
+        return false;
+    }
+    InterleavedBuffer interleaved = {
+        .samples = buffer->samples,
+        .frame_count = buffer->count,
+        .sample_rate = buffer->sample_rate,
+        .channel_count = 1U,
+    };
+    return audio_clip_set_interleaved(clip, &interleaved);
 }
 
 bool audio_clip_play(AudioClip *clip) {
@@ -165,22 +191,37 @@ void audio_clip_unload(AudioClip *clip) {
     *clip = (AudioClip){0};
 }
 
-bool export_samples_to_wav(const char *path, const SampleBuffer *buffer) {
+bool export_interleaved_to_wav(const char *path,
+                               const InterleavedBuffer *buffer) {
     if (path == NULL || buffer == NULL || buffer->samples == NULL ||
-        buffer->count == 0 || buffer->sample_rate == 0U ||
-        buffer->count > (UINT32_MAX - 36U) / sizeof(int16_t)) {
+        buffer->frame_count == 0U || buffer->sample_rate == 0U ||
+        buffer->channel_count == 0U ||
+        buffer->channel_count > UINT16_MAX ||
+        buffer->frame_count >
+            SIZE_MAX / (size_t)buffer->channel_count) {
         return false;
     }
+    size_t sample_count =
+        buffer->frame_count * (size_t)buffer->channel_count;
+    if (sample_count >
+        (UINT32_MAX - 36U) / sizeof(int16_t)) {
+        return false;
+    }
+    uint64_t byte_rate =
+        (uint64_t)buffer->sample_rate *
+        (uint64_t)buffer->channel_count *
+        sizeof(int16_t);
+    if (byte_rate > UINT32_MAX) return false;
 
     FILE *file = platform_fopen_utf8(path, "wb");
     if (file == NULL) {
         return false;
     }
 
-    uint16_t channels = 1;
+    uint16_t channels = (uint16_t)buffer->channel_count;
     uint16_t bits_per_sample = 16;
-    uint32_t data_bytes = (uint32_t)(buffer->count * sizeof(int16_t));
-    uint32_t byte_rate = buffer->sample_rate * channels * bits_per_sample / 8;
+    uint32_t data_bytes =
+        (uint32_t)(sample_count * sizeof(int16_t));
     uint16_t block_align = channels * bits_per_sample / 8;
 
     fwrite("RIFF", 1, 4, file);
@@ -191,13 +232,13 @@ bool export_samples_to_wav(const char *path, const SampleBuffer *buffer) {
     write_u16_le(file, 1);
     write_u16_le(file, channels);
     write_u32_le(file, buffer->sample_rate);
-    write_u32_le(file, byte_rate);
+    write_u32_le(file, (uint32_t)byte_rate);
     write_u16_le(file, block_align);
     write_u16_le(file, bits_per_sample);
     fwrite("data", 1, 4, file);
     write_u32_le(file, data_bytes);
 
-    for (size_t i = 0; i < buffer->count; i++) {
+    for (size_t i = 0; i < sample_count; i++) {
         write_u16_le(file, (uint16_t)float_to_pcm16(buffer->samples[i]));
     }
 
@@ -206,5 +247,18 @@ bool export_samples_to_wav(const char *path, const SampleBuffer *buffer) {
         written = false;
     }
     return written;
+}
+
+bool export_samples_to_wav(const char *path, const SampleBuffer *buffer) {
+    if (buffer == NULL) {
+        return false;
+    }
+    InterleavedBuffer interleaved = {
+        .samples = buffer->samples,
+        .frame_count = buffer->count,
+        .sample_rate = buffer->sample_rate,
+        .channel_count = 1U,
+    };
+    return export_interleaved_to_wav(path, &interleaved);
 }
 

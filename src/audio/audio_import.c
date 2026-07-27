@@ -92,6 +92,7 @@ void imported_audio_unload(ImportedAudio *audio) {
     if (audio == NULL) {
         return;
     }
+    interleaved_buffer_free(&audio->interleaved);
     sample_buffer_free(&audio->mono);
     audio->source_channels = 0U;
     audio->source_sample_size = 0U;
@@ -154,11 +155,27 @@ bool imported_audio_load(const char *path, ImportedAudio *audio, char *error, si
 
     float *interleaved = LoadWaveSamples(wave);
     float *mono = (float *)calloc((size_t)wave.frameCount, sizeof(float));
-    if (interleaved == NULL || mono == NULL) {
+    unsigned int preserved_channels = wave.channels <= 2U ? wave.channels : 1U;
+    if ((size_t)wave.frameCount >
+        SIZE_MAX / ((size_t)preserved_channels * sizeof(float))) {
         if (interleaved != NULL) {
             UnloadWaveSamples(interleaved);
         }
         free(mono);
+        UnloadWave(wave);
+        set_error(error, error_size, "The decoded audio file is too large.");
+        return false;
+    }
+    size_t preserved_sample_count =
+        (size_t)wave.frameCount * (size_t)preserved_channels;
+    float *preserved =
+        (float *)calloc(preserved_sample_count, sizeof(float));
+    if (interleaved == NULL || mono == NULL || preserved == NULL) {
+        if (interleaved != NULL) {
+            UnloadWaveSamples(interleaved);
+        }
+        free(mono);
+        free(preserved);
         UnloadWave(wave);
         set_error(error, error_size, "Not enough memory to load this audio file.");
         return false;
@@ -171,12 +188,28 @@ bool imported_audio_load(const char *path, ImportedAudio *audio, char *error, si
     if (!mixed) {
         UnloadWaveSamples(interleaved);
         free(mono);
+        free(preserved);
         UnloadWave(wave);
         set_error(error, error_size, "Could not convert decoded audio to mono.");
         return false;
     }
+    if (preserved_channels == wave.channels) {
+        memcpy(preserved,
+               interleaved,
+               preserved_sample_count * sizeof(float));
+    } else {
+        memcpy(preserved,
+               mono,
+               (size_t)wave.frameCount * sizeof(float));
+    }
 
     ImportedAudio loaded = {
+        .interleaved = {
+            .samples = preserved,
+            .frame_count = (size_t)wave.frameCount,
+            .sample_rate = wave.sampleRate,
+            .channel_count = preserved_channels,
+        },
         .mono = {
             .samples = mono,
             .count = (size_t)wave.frameCount,

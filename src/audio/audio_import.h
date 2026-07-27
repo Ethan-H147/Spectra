@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 typedef struct {
+    InterleavedBuffer interleaved;
     SampleBuffer mono;
     unsigned int source_channels;
     unsigned int source_sample_size;

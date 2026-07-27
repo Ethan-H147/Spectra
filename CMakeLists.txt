@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(SpectraDesktop C)
+project(SpectraDesktop LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -16,10 +16,16 @@ target_include_directories(spectra_desktop PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/
 if(WIN32)
     set_target_properties(spectra_desktop PROPERTIES WIN32_EXECUTABLE TRUE)
     if(MSVC)
-        target_link_options(spectra_desktop PRIVATE /ENTRY:mainCRTStartup)
+        target_link_options(
+            spectra_desktop
+            PRIVATE
+                /ENTRY:mainCRTStartup
+                /MANIFEST:NO
+        )
     endif()
 
     string(REPLACE "\\" "/" SPECTRA_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/spectra.ico")
+    string(REPLACE "\\" "/" SPECTRA_MANIFEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/windows/spectra.manifest")
     configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/src/windows/spectra.rc.in"
         "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc"
@@ -52,6 +58,13 @@ else()
 endif()
 
 if(WIN32)
+    find_package(glfw3 CONFIG REQUIRED)
+endif()
+
+find_package(Threads REQUIRED)
+target_link_libraries(spectra_desktop PRIVATE Threads::Threads)
+
+if(WIN32)
     target_link_libraries(spectra_desktop PRIVATE winmm shell32 comdlg32)
 elseif(UNIX AND NOT APPLE)
     target_link_libraries(spectra_desktop PRIVATE m)
@@ -69,6 +82,7 @@ target_include_directories(dsp_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 add_executable(audio_import_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_import_tests.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/audio_engine.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/audio_import.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/channel_mix.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/dsp_types.c"
@@ -77,6 +91,21 @@ add_executable(audio_import_tests
 )
 target_include_directories(audio_import_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(audio_import_tests PRIVATE raylib)
+
+add_executable(ui_layout_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui_layout_tests.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/spectrogram_layout.c"
+)
+target_include_directories(ui_layout_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+add_executable(runtime_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_tests.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/reconstruction_cache.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/dsp_types.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/background_task.c"
+)
+target_include_directories(runtime_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(runtime_tests PRIVATE Threads::Threads)
 
 if(WIN32)
     target_link_libraries(dsp_tests PRIVATE winmm)
@@ -89,3 +118,5 @@ endif()
 enable_testing()
 add_test(NAME dsp_tests COMMAND dsp_tests)
 add_test(NAME audio_import_tests COMMAND audio_import_tests)
+add_test(NAME ui_layout_tests COMMAND ui_layout_tests)
+add_test(NAME runtime_tests COMMAND runtime_tests)

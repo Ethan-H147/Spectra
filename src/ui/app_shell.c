@@ -1,5 +1,6 @@
 #include "ui/app_shell.h"
 
+#include "ui/spectrogram_layout.h"
 #include "ui/widgets.h"
 
 #include <math.h>
@@ -277,7 +278,7 @@ static void draw_status_bar(const AppTheme *theme, bool audio_ready, float windo
     float text_y = bounds.y + (bounds.height - theme_scaled_size(theme, 12.0f)) * 0.5f - 1.0f;
     theme_draw_text(theme, audio_ready ? "Audio device ready" : "Audio device unavailable", 32.0f,
                     text_y, 12.0f, theme->muted_text);
-    const char *pipeline = "44.1 kHz  |  Mono  |  FFT 16384  |  Local processing";
+    const char *pipeline = "44.1 kHz  |  Mono / stereo  |  FFT 16384  |  Local processing";
     int width = theme_measure_text(theme, pipeline, 12.0f);
     float pipeline_x = window_width - (float)width - UI_SPACE_2;
     if (pipeline_x > SIDEBAR_WIDTH + CONTENT_MARGIN) {
@@ -452,7 +453,7 @@ AppPage draw_overview_page(const AppTheme *theme, Rectangle workspace) {
     float body_step = theme_scaled_size(theme, 14.0f) + 7.0f;
     theme_draw_text(theme, "Spectra generates and analyzes audio locally with Fourier methods and additive synthesis.",
                     scope.x + 22.0f, body_y, 14.0f, theme->muted_text);
-    theme_draw_text(theme, "Every planned workspace maps directly to a stage in the documented signal pipeline.",
+    theme_draw_text(theme, "Every workspace maps directly to a stage in the documented signal pipeline.",
                     scope.x + 22.0f, body_y + body_step, 14.0f, theme->muted_text);
     float badge_y = scope.y + scope.height - 38.0f;
     shell_draw_badge(theme, (Rectangle){scope.x + 22, badge_y, 160, 28}, "LOCAL PROCESSING", theme->accent);
@@ -1655,6 +1656,12 @@ static void draw_compact_stat(const AppTheme *theme,
     }
 }
 
+static Rectangle raylib_rectangle(
+    SpectrogramLayoutRect rect) {
+    return (Rectangle){
+        rect.x, rect.y, rect.width, rect.height};
+}
+
 SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
                                          Rectangle workspace,
                                          const SpectrogramView *view) {
@@ -1677,27 +1684,25 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         fixed_global && view != NULL &&
         view->global_selection_mode ==
             GLOBAL_SELECTION_SPECTRAL_ENERGY;
+    bool fixed_available =
+        !fixed_global ||
+        (view != NULL && view->maximum_top_components > 0);
+    bool configuration_enabled =
+        source_loaded && fixed_available;
     int maximum_components =
         view != NULL && view->maximum_top_components > 0
             ? view->maximum_top_components
             : (fixed_global ? 1 : 1023);
 
-    float inspector_width =
-        fminf(400.0f,
-              fmaxf(344.0f, workspace.width * 0.32f));
-    float column_gap = UI_SPACE_2;
-    Rectangle inspector = {
-        workspace.x,
-        workspace.y,
-        inspector_width,
-        workspace.height,
-    };
-    Rectangle canvas = {
-        inspector.x + inspector.width + column_gap,
-        workspace.y,
-        workspace.width - inspector.width - column_gap,
-        workspace.height,
-    };
+    SpectrogramPageLayout page_layout =
+        spectrogram_page_layout(workspace.x,
+                                workspace.y,
+                                workspace.width,
+                                workspace.height);
+    Rectangle inspector =
+        raylib_rectangle(page_layout.inspector);
+    Rectangle canvas =
+        raylib_rectangle(page_layout.canvas);
     DrawRectangleRounded(
         inspector, 0.035f, 12, theme->panel);
     DrawRectangleRoundedLines(
@@ -1707,17 +1712,26 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
     DrawRectangleRoundedLines(
         canvas, 0.025f, 12, theme->panel_border);
 
-    float content_x = inspector.x + UI_SPACE_2;
-    float content_width = inspector.width - UI_SPACE_4;
+    float content_x =
+        page_layout.inspector_content.x;
+    float content_width =
+        page_layout.inspector_content.width;
     const char *state_label =
-        processing ? "PROCESSING"
-                   : (ready ? "READY" : "NO AUDIO");
+        !source_loaded ? "NO AUDIO"
+                       : (processing
+                              ? "PROCESSING"
+                              : (ready ? "READY"
+                                       : "UNAVAILABLE"));
     Color state_color =
         processing ? theme->accent
                    : (ready ? (Color){70, 190, 120, 255}
-                            : theme->muted_text);
+                            : (source_loaded
+                                   ? (Color){229, 160, 62, 255}
+                                   : theme->muted_text));
     float state_width =
-        processing ? 102.0f : 76.0f;
+        processing || (source_loaded && !ready)
+            ? 110.0f
+            : 76.0f;
     Rectangle state_bounds = {
         inspector.x + inspector.width - state_width -
             UI_SPACE_2,
@@ -1748,11 +1762,20 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         format_compact_duration(view->duration_seconds,
                                 duration_text,
                                 sizeof(duration_text));
+        const char *output_label =
+            fixed_global
+                ? (view->global_reconstruction_channels > 1U
+                       ? "Stereo FFT output"
+                       : "Mono FFT output")
+                : (view->reconstruction_channels > 1U
+                       ? "Stereo STFT output"
+                       : "Mono STFT output");
         snprintf(metadata,
                  sizeof(metadata),
-                 "%s  |  %.1f kHz  |  Mono",
+                 "%s  |  %.1f kHz  |  %s",
                  duration_text,
-                 (float)view->sample_rate / 1000.0f);
+                 (float)view->sample_rate / 1000.0f,
+                 output_label);
         draw_fitted_text(theme,
                          metadata,
                          content_x,
@@ -1778,50 +1801,49 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
                     11.0f,
                     theme->muted_text);
     const char *mode_labels[] = {
-        "Whole-file FFT", "Time-varying STFT"};
-    int selected_mode = fixed_global ? 0 : 1;
+        "Mono FFT", "Stereo FFT", "STFT"};
+    int selected_mode =
+        !fixed_global
+            ? 2
+            : (view != NULL &&
+                       view->global_channel_mode ==
+                           GLOBAL_FOURIER_CHANNEL_SOURCE &&
+                       view->source_reconstruction_channels > 1U
+                   ? 1
+                   : 0);
     int pressed_mode = draw_segmented_control(
         theme,
-        (Rectangle){content_x,
-                    inspector.y + 96.0f,
-                    content_width,
-                    40.0f},
+        raylib_rectangle(page_layout.mode_control),
         mode_labels,
-        2,
+        3,
         selected_mode,
         source_loaded);
     if (pressed_mode >= 0 && pressed_mode != selected_mode) {
         actions.select_mode = true;
         actions.mode =
-            pressed_mode == 0
-                ? FULL_FILE_MODE_FIXED_GLOBAL
-                : FULL_FILE_MODE_TIME_VARYING_STFT;
+            pressed_mode == 2
+                ? FULL_FILE_MODE_TIME_VARYING_STFT
+                : FULL_FILE_MODE_FIXED_GLOBAL;
+        if (pressed_mode < 2) {
+            actions.select_global_channel_mode = true;
+            actions.global_channel_mode =
+                pressed_mode == 0
+                    ? GLOBAL_FOURIER_CHANNEL_MONO
+                    : GLOBAL_FOURIER_CHANNEL_SOURCE;
+        }
     }
 
-    float action_y = inspector.y + 152.0f;
-    float action_gap = UI_SPACE_1;
-    float action_width =
-        (content_width - action_gap) / 2.0f;
-    Rectangle original_button = {
-        content_x, action_y, action_width, 42.0f};
-    Rectangle reconstruction_button = {
-        original_button.x + original_button.width +
-            action_gap,
-        action_y,
-        action_width,
-        42.0f};
-    Rectangle export_button = {
-        content_x,
-        action_y + 50.0f,
-        content_width,
-        42.0f};
+    Rectangle original_button =
+        raylib_rectangle(page_layout.original_button);
+    Rectangle reconstruction_button = raylib_rectangle(
+        page_layout.reconstruction_button);
+    Rectangle export_button =
+        raylib_rectangle(page_layout.export_button);
     if (!source_loaded) {
         actions.open_analysis = draw_button(
             theme,
-            (Rectangle){content_x,
-                        action_y,
-                        content_width,
-                        42.0f},
+            raylib_rectangle(
+                page_layout.choose_audio_button),
             "Choose audio",
             theme->accent);
     } else {
@@ -1855,17 +1877,13 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
     TransportPlayerActions player_actions =
         draw_transport_player(
             theme,
-            (Rectangle){content_x,
-                        inspector.y + 260.0f,
-                        content_width,
-                        68.0f},
+            raylib_rectangle(page_layout.player),
             source_loaded ? &view->player : &empty_player);
     actions.toggle_play_pause =
         player_actions.toggle_play_pause;
     actions.stop = player_actions.stop;
 
     float preset_label_y;
-    float preset_y;
     if (fixed_global) {
         theme_draw_text(theme,
                         "Keep by",
@@ -1878,14 +1896,12 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         int selected_basis = energy_selection ? 1 : 0;
         int pressed_basis = draw_segmented_control(
             theme,
-            (Rectangle){content_x,
-                        inspector.y + 368.0f,
-                        content_width,
-                        38.0f},
+            raylib_rectangle(
+                page_layout.fixed_basis_control),
             basis_labels,
             2,
             selected_basis,
-            source_loaded);
+            configuration_enabled);
         if (pressed_basis >= 0 &&
             pressed_basis != selected_basis) {
             actions.select_global_selection_mode = true;
@@ -1895,16 +1911,14 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
                     : GLOBAL_SELECTION_SPECTRAL_ENERGY;
         }
         preset_label_y = inspector.y + 424.0f;
-        preset_y = inspector.y + 444.0f;
     } else {
         theme_draw_text(theme,
-                        "Components per frame",
+                        "Components per frame / channel",
                         content_x,
                         inspector.y + 356.0f,
                         11.0f,
                         theme->muted_text);
         preset_label_y = inspector.y + 376.0f;
-        preset_y = inspector.y + 396.0f;
     }
     theme_draw_text(theme,
                     "Presets",
@@ -1965,14 +1979,13 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
 
     int pressed_preset = draw_segmented_control(
         theme,
-        (Rectangle){content_x,
-                    preset_y,
-                    content_width,
-                    38.0f},
+        raylib_rectangle(
+            fixed_global ? page_layout.fixed_presets
+                         : page_layout.adaptive_presets),
         preset_labels,
         preset_count,
         selected_preset,
-        source_loaded);
+        configuration_enabled);
     if (pressed_preset >= 0 &&
         pressed_preset != selected_preset) {
         if (fixed_global && energy_selection) {
@@ -1986,16 +1999,15 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         }
     }
 
-    float custom_y = preset_y + 54.0f;
-    if (source_loaded) {
+    SpectrogramLayoutRect custom_layout =
+        fixed_global ? page_layout.fixed_custom_input
+                     : page_layout.adaptive_custom_input;
+    if (configuration_enabled) {
         if (fixed_global && energy_selection) {
             float energy_target = actions.energy_target;
             if (draw_energy_target_input(
                     theme,
-                    (Rectangle){content_x,
-                                custom_y,
-                                content_width,
-                                40.0f},
+                    raylib_rectangle(custom_layout),
                     view->selected_energy_target,
                     &energy_target)) {
                 actions.select_energy_target = true;
@@ -2005,10 +2017,7 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
             int exact_value = actions.top_component_count;
             if (draw_component_count_input(
                     theme,
-                    (Rectangle){content_x,
-                                custom_y,
-                                content_width,
-                                40.0f},
+                    raylib_rectangle(custom_layout),
                     view->mode,
                     view->selected_top_components,
                     maximum_components,
@@ -2017,13 +2026,18 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
                 actions.top_component_count = exact_value;
             }
         }
+    } else if (!source_loaded) {
+        draw_disabled_button(theme,
+                             raylib_rectangle(custom_layout),
+                             "Choose audio to configure");
     } else {
         draw_disabled_button(theme,
-                             (Rectangle){content_x,
-                                         custom_y,
-                                         content_width,
-                                         40.0f},
-                             "Choose audio to configure");
+                             raylib_rectangle(custom_layout),
+                             view != NULL &&
+                                     view->global_channel_mode ==
+                                         GLOBAL_FOURIER_CHANNEL_SOURCE
+                                 ? "Choose Mono FFT"
+                                 : "Use STFT");
     }
 
     float status_y =
@@ -2052,11 +2066,8 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
     if (processing) {
         float progress =
             fminf(fmaxf(view->progress, 0.0f), 1.0f);
-        Rectangle progress_track = {
-            inspector.x,
-            inspector.y + inspector.height - 5.0f,
-            inspector.width,
-            5.0f};
+        Rectangle progress_track = raylib_rectangle(
+            page_layout.progress_track);
         DrawRectangleRec(
             progress_track, (Color){43, 43, 47, 255});
         DrawRectangleRec(
@@ -2069,18 +2080,12 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
 
     theme_draw_heading(theme,
                        "Spectrogram",
-                       canvas.x + UI_SPACE_2,
-                       canvas.y + UI_SPACE_2,
+                       page_layout.canvas_title.x,
+                       page_layout.canvas_title.y,
                        17.0f,
                        theme->text);
-    float legend_width =
-        fminf(128.0f, canvas.width * 0.32f);
-    Rectangle legend = {
-        canvas.x + canvas.width - legend_width -
-            UI_SPACE_2,
-        canvas.y + 22.0f,
-        legend_width,
-        8.0f};
+    Rectangle legend =
+        raylib_rectangle(page_layout.legend_bar);
     DrawRectangleGradientH(
         (int)legend.x,
         (int)legend.y,
@@ -2090,8 +2095,8 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         (Color){244, 192, 72, 255});
     theme_draw_text(theme,
                     "-100 dB",
-                    legend.x,
-                    legend.y + 12.0f,
+                    page_layout.legend_labels.x,
+                    page_layout.legend_labels.y,
                     10.5f,
                     theme->muted_text);
     const char *zero_db = "0 dB";
@@ -2099,9 +2104,10 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         theme_measure_text(theme, zero_db, 10.5f);
     theme_draw_text(theme,
                     zero_db,
-                    legend.x + legend.width -
+                    page_layout.legend_labels.x +
+                        page_layout.legend_labels.width -
                         (float)zero_width,
-                    legend.y + 12.0f,
+                    page_layout.legend_labels.y,
                     10.5f,
                     theme->muted_text);
 
@@ -2122,14 +2128,28 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
                 : 0U,
             component_text,
             sizeof(component_text));
-        if (fixed_global && energy_selection) {
+        if (fixed_global && !fixed_available) {
+            snprintf(first_value,
+                     sizeof(first_value),
+                     "Unavailable");
+            second_label = "Grid share";
+            snprintf(second_value,
+                     sizeof(second_value),
+                     "--");
+            third_label = "Energy";
+            snprintf(third_value,
+                     sizeof(third_value),
+                     "--");
+        } else if (fixed_global && energy_selection) {
             snprintf(first_value,
                      sizeof(first_value),
                      "%.2f%% energy",
                      view->selected_energy_target * 100.0f);
             snprintf(second_value,
                      sizeof(second_value),
-                     "%s bins",
+                     view->global_reconstruction_channels > 1U
+                         ? "%s bins / ch"
+                         : "%s bins",
                      component_text);
             third_label =
                 processing ? "Progress" : "Grid share";
@@ -2149,7 +2169,9 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         } else if (fixed_global) {
             snprintf(first_value,
                      sizeof(first_value),
-                     "%s bins",
+                     view->global_reconstruction_channels > 1U
+                         ? "%s bins / ch"
+                         : "%s bins",
                      component_text);
             second_label = "Grid share";
             snprintf(second_value,
@@ -2170,7 +2192,7 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         } else {
             snprintf(first_value,
                      sizeof(first_value),
-                     "Top %s / frame",
+                     "Top %s / frame / ch",
                      component_text);
             second_label = "Frames";
             format_grouped_count(view->frame_count,
@@ -2195,17 +2217,10 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
                  "Not selected");
     }
 
-    Rectangle stats = {
-        canvas.x + UI_SPACE_2,
-        canvas.y + 56.0f,
-        canvas.width - UI_SPACE_4,
-        50.0f,
-    };
+    Rectangle stats =
+        raylib_rectangle(page_layout.stats_content);
     DrawRectangleRounded(
-        (Rectangle){stats.x - UI_SPACE_1,
-                    stats.y - UI_SPACE_1,
-                    stats.width + UI_SPACE_2,
-                    stats.height + UI_SPACE_2},
+        raylib_rectangle(page_layout.stats_panel),
         0.10f,
         10,
         (Color){29, 30, 34, 255});
@@ -2238,11 +2253,8 @@ SpectrogramActions draw_spectrogram_page(const AppTheme *theme,
         third_value,
         false);
 
-    Rectangle plot = {
-        canvas.x + 64.0f,
-        canvas.y + 132.0f,
-        canvas.width - 80.0f,
-        canvas.height - 172.0f};
+    Rectangle plot =
+        raylib_rectangle(page_layout.plot);
     if (plot.height < 90.0f) plot.height = 90.0f;
     if (plot.width < 90.0f) plot.width = 90.0f;
     DrawRectangleRec(plot, (Color){17, 18, 28, 255});
@@ -2351,7 +2363,74 @@ static void draw_text_scale_row(AppTheme *theme, Rectangle bounds) {
              (int)(bounds.y + bounds.height - 1), theme->panel_border);
 }
 
-void draw_settings_page(AppTheme *theme, Rectangle workspace, bool audio_ready) {
+static bool draw_fft_memory_limit_row(
+    const AppTheme *theme,
+    Rectangle bounds,
+    size_t current_bytes,
+    size_t *selected_bytes) {
+    static const size_t limits[] = {
+        (size_t)512U * 1024U * 1024U,
+        (size_t)768U * 1024U * 1024U,
+        (size_t)1024U * 1024U * 1024U,
+        (size_t)1536U * 1024U * 1024U,
+    };
+    static const char *labels[] = {
+        "512 MB", "768 MB", "1 GB", "1.5 GB"};
+    int selected_index = 1;
+    for (int index = 0; index < 4; index++) {
+        if (current_bytes == limits[index]) {
+            selected_index = index;
+            break;
+        }
+    }
+
+    theme_draw_heading(
+        theme, "Whole-file FFT memory", bounds.x, bounds.y,
+        14.0f, theme->text);
+    float description_y =
+        bounds.y + theme_scaled_size(theme, 14.0f) + 4.0f;
+    if (description_y + theme_scaled_size(theme, 12.5f) <=
+        bounds.y + bounds.height - 5.0f) {
+        draw_fitted_text(
+            theme,
+            "Unlocks heavier stereo FFT models",
+            bounds.x,
+            description_y,
+            bounds.width - 120.0f,
+            12.5f,
+            10.0f,
+            theme->muted_text,
+            false);
+    }
+    Rectangle value_button = {
+        bounds.x + bounds.width - 104.0f,
+        bounds.y + 1.0f,
+        104.0f,
+        44.0f,
+    };
+    bool changed = draw_button(
+        theme,
+        value_button,
+        labels[selected_index],
+        theme->accent);
+    if (changed && selected_bytes != NULL) {
+        int next_index = (selected_index + 1) % 4;
+        *selected_bytes = limits[next_index];
+    }
+    DrawLine((int)bounds.x,
+             (int)(bounds.y + bounds.height - 1),
+             (int)(bounds.x + bounds.width),
+             (int)(bounds.y + bounds.height - 1),
+             theme->panel_border);
+    return changed;
+}
+
+SettingsActions draw_settings_page(
+    AppTheme *theme,
+    Rectangle workspace,
+    bool audio_ready,
+    const SettingsView *view) {
+    SettingsActions actions = {0};
     float card_width = (workspace.width - 18.0f) * 0.5f;
     float card_height = (workspace.height - 18.0f) * 0.5f;
     Rectangle general = {workspace.x, workspace.y, card_width, card_height};
@@ -2366,21 +2445,36 @@ void draw_settings_page(AppTheme *theme, Rectangle workspace, bool audio_ready) 
     float rows_y = general.y + 16.0f + theme_scaled_size(theme, 17.0f) + 5.0f +
                    theme_scaled_size(theme, 14.0f) + 18.0f;
     float card_body_height = general.y + general.height - rows_y - 12.0f;
-    float top_row_height = fminf(78.0f, card_body_height / 3.0f);
+    float top_row_height =
+        fminf(68.0f, card_body_height / 4.0f);
     float bottom_row_height = fminf(72.0f, card_body_height / 4.0f);
     draw_setting_row(theme, (Rectangle){general.x + 20, rows_y, general.width - 40, top_row_height},
                      "Startup workspace", "Page shown when Spectra opens", "Overview", true);
     draw_setting_row(theme, (Rectangle){general.x + 20, rows_y + top_row_height, general.width - 40, top_row_height},
-                     "Restore last session", "Remember synth controls between launches", "Planned", false);
+                     "DSP processing", "Whole-file transforms run away from the UI", "Background", true);
     draw_setting_row(theme, (Rectangle){general.x + 20, rows_y + top_row_height * 2.0f, general.width - 40, top_row_height},
-                     "Autosave", "Store workspace changes locally", "Planned", false);
+                     "Reconstruction cache", "Reuses recently rendered component counts", "256 MB", true);
+    size_t selected_limit =
+        view != NULL ? view->global_memory_limit_bytes
+                     : (size_t)768U * 1024U * 1024U;
+    if (draw_fft_memory_limit_row(
+            theme,
+            (Rectangle){general.x + 20,
+                        rows_y + top_row_height * 3.0f,
+                        general.width - 40,
+                        top_row_height},
+            selected_limit,
+            &selected_limit)) {
+        actions.select_global_memory_limit = true;
+        actions.global_memory_limit_bytes = selected_limit;
+    }
 
     draw_setting_row(theme, (Rectangle){audio.x + 20, rows_y, audio.width - 40, top_row_height},
                      "Output device", "Raylib system playback destination", audio_ready ? "System default" : "Unavailable", true);
     draw_setting_row(theme, (Rectangle){audio.x + 20, rows_y + top_row_height, audio.width - 40, top_row_height},
                      "Sample rate", "Synthesis and analysis sample rate", "44,100 Hz", true);
     draw_setting_row(theme, (Rectangle){audio.x + 20, rows_y + top_row_height * 2.0f, audio.width - 40, top_row_height},
-                     "Channel mode", "Generated and analyzed signal layout", "Mono", true);
+                     "Channel mode", "Preserves mono/stereo imported playback", "Source-aware", true);
 
     float bottom_rows_y = analysis.y + (rows_y - general.y);
     draw_setting_row(theme, (Rectangle){analysis.x + 20, bottom_rows_y, analysis.width - 40, bottom_row_height},
@@ -2400,4 +2494,5 @@ void draw_settings_page(AppTheme *theme, Rectangle workspace, bool audio_ready) 
                      "Full screen", "Toggle borderless full screen", "F11", true);
     draw_text_scale_row(theme, (Rectangle){appearance.x + 20, bottom_rows_y + bottom_row_height * 3.0f,
                                            appearance.width - 40, bottom_row_height});
+    return actions;
 }

@@ -11,7 +11,13 @@
       <FullPath>C:\Users\huyus\Projects\C-Spectra\build-windows\Release\dsp_tests.exe</FullPath>
     </ProjectOutput>
     <ProjectOutput>
+      <FullPath>C:\Users\huyus\Projects\C-Spectra\build-windows\Release\runtime_tests.exe</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
       <FullPath>C:\Users\huyus\Projects\C-Spectra\build-windows\Release\spectra_desktop.exe</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>C:\Users\huyus\Projects\C-Spectra\build-windows\Release\ui_layout_tests.exe</FullPath>
     </ProjectOutput>
     <ProjectOutput>
       <FullPath>C:\Users\huyus\Projects\C-Spectra\build-windows\x64\Release\ALL_BUILD</FullPath>

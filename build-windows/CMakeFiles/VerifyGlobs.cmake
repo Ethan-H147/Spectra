@@ -6,6 +6,7 @@ file(GLOB_RECURSE NEW_GLOB LIST_DIRECTORIES false "C:/Users/huyus/Projects/C-Spe
 set(OLD_GLOB
   "C:/Users/huyus/Projects/C-Spectra/src/audio/audio_engine.c"
   "C:/Users/huyus/Projects/C-Spectra/src/audio/audio_import.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/audio/reconstruction_cache.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/additive_synth.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/channel_mix.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/dsp_types.c"
@@ -20,10 +21,12 @@ set(OLD_GLOB
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/waveform_summary.c"
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/windowing.c"
   "C:/Users/huyus/Projects/C-Spectra/src/main.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/platform/background_task.c"
   "C:/Users/huyus/Projects/C-Spectra/src/platform/file_io.c"
   "C:/Users/huyus/Projects/C-Spectra/src/platform/windows_app.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/app_shell.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/help_center.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/ui/spectrogram_layout.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/theme.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/widgets.c"
   )
@@ -48,7 +51,7 @@ if(NOT "${NEW_GLOB}" STREQUAL "${OLD_GLOB}")
   file(TOUCH_NOCREATE "C:/Users/huyus/Projects/C-Spectra/build-windows/CMakeFiles/cmake.verify_globs")
 endif()
 
-# SPECTRA_DSP_SOURCES at CMakeLists.txt:60 (file)
+# SPECTRA_DSP_SOURCES at CMakeLists.txt:73 (file)
 file(GLOB_RECURSE NEW_GLOB LIST_DIRECTORIES false "C:/Users/huyus/Projects/C-Spectra/src/dsp/*.c")
 set(OLD_GLOB
   "C:/Users/huyus/Projects/C-Spectra/src/dsp/additive_synth.c"

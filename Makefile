@@ -6,6 +6,7 @@ TARGET = build/spectra_desktop
 APP_SRC = src/main.c \
 	$(wildcard src/audio/*.c) \
 	$(wildcard src/dsp/*.c) \
+	$(wildcard src/platform/*.c) \
 	$(wildcard src/ui/*.c)
 
 DSP_SRC = $(wildcard src/dsp/*.c)

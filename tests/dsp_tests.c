@@ -121,6 +121,22 @@ static int test_stereo_downmix(void) {
     ASSERT_TRUE(fabsf(mono[0]) < 0.0001f, "opposite stereo channels should average to zero");
     ASSERT_TRUE(fabsf(mono[1] - 0.5f) < 0.0001f, "equal stereo channels should preserve their value");
     ASSERT_TRUE(fabsf(mono[2] - 0.25f) < 0.0001f, "stereo channels should use their arithmetic mean");
+
+    float left_samples[] = {0.1f, 0.2f, 0.3f};
+    float right_samples[] = {-0.1f, -0.2f, -0.3f};
+    SampleBuffer channels[] = {
+        {left_samples, 3U, 48000U},
+        {right_samples, 3U, 48000U},
+    };
+    InterleavedBuffer rebuilt = {0};
+    ASSERT_TRUE(interleave_sample_buffers(channels, 2U, &rebuilt),
+                "two matching mono buffers should interleave");
+    ASSERT_TRUE(rebuilt.channel_count == 2U &&
+                    rebuilt.frame_count == 3U &&
+                    fabsf(rebuilt.samples[2] - 0.2f) < 0.0001f &&
+                    fabsf(rebuilt.samples[3] + 0.2f) < 0.0001f,
+                "interleaving should preserve left/right frame order");
+    interleaved_buffer_free(&rebuilt);
     return 0;
 }
 
@@ -526,6 +542,116 @@ static int test_stft_progressive_quality(void) {
     return 0;
 }
 
+static int test_strided_stereo_reconstruction(void) {
+    const unsigned int sample_rate = 1024U;
+    const size_t frame_count = 1024U;
+    float stereo[2048] = {0};
+    for (size_t frame = 0U; frame < frame_count; frame++) {
+        float time = (float)frame / (float)sample_rate;
+        stereo[frame * 2U] =
+            0.6f * sinf(2.0f * 3.14159265358979323846f *
+                        32.0f * time);
+        stereo[frame * 2U + 1U] =
+            0.4f * sinf(2.0f * 3.14159265358979323846f *
+                        96.0f * time);
+    }
+
+    GlobalFourierJob left;
+    GlobalFourierJob right;
+    global_fourier_job_init(&left);
+    global_fourier_job_init(&right);
+    int available =
+        global_fourier_available_component_count(frame_count);
+    ASSERT_TRUE(global_fourier_job_begin_analysis_strided(
+                    &left,
+                    stereo,
+                    frame_count,
+                    2U,
+                    sample_rate,
+                    available) &&
+                    global_fourier_job_begin_analysis_strided(
+                        &right,
+                        stereo + 1U,
+                        frame_count,
+                        2U,
+                        sample_rate,
+                        available),
+                "stereo channel views should initialize independent global models");
+    ASSERT_TRUE(finish_global_fourier_job(&left, 41U) &&
+                    finish_global_fourier_job(&right, 41U),
+                "strided global channel analysis should complete");
+    ASSERT_TRUE(left.components[0].bin == 32U &&
+                    right.components[0].bin == 96U,
+                "strided global analysis should preserve distinct left and right spectra");
+
+    StftReconstructionJob right_stft;
+    stft_reconstruction_job_init(&right_stft);
+    ASSERT_TRUE(stft_reconstruction_job_begin_strided(
+                    &right_stft,
+                    stereo + 1U,
+                    frame_count,
+                    2U,
+                    sample_rate,
+                    512U,
+                    128U,
+                    255,
+                    false,
+                    0U,
+                    0U,
+                    0.0f),
+                "strided right-channel STFT should initialize");
+    ASSERT_TRUE(finish_stft_job(&right_stft, 8U),
+                "strided right-channel STFT should complete");
+    SampleBuffer rebuilt =
+        stft_reconstruction_job_take_output(&right_stft);
+    double squared_error = 0.0;
+    for (size_t frame = 0U; frame < frame_count; frame++) {
+        double difference =
+            (double)stereo[frame * 2U + 1U] -
+            (double)rebuilt.samples[frame];
+        squared_error += difference * difference;
+    }
+    ASSERT_TRUE(sqrt(squared_error / (double)frame_count) <
+                    0.00002,
+                "full-bin strided STFT should reconstruct the selected channel");
+
+    sample_buffer_free(&rebuilt);
+    stft_reconstruction_job_free(&right_stft);
+    global_fourier_job_free(&left);
+    global_fourier_job_free(&right);
+    return 0;
+}
+
+static int test_global_fourier_memory_policy(void) {
+    const size_t sample_count = 4096U;
+    int available =
+        global_fourier_available_component_count(sample_count);
+    size_t mono_bytes =
+        global_fourier_estimated_multichannel_analysis_bytes(
+            sample_count, available, 1U);
+    size_t stereo_bytes =
+        global_fourier_estimated_multichannel_analysis_bytes(
+            sample_count, available, 2U);
+
+    ASSERT_TRUE(mono_bytes > 0U &&
+                    stereo_bytes == mono_bytes * 2U,
+                "multichannel FFT estimates should scale safely by channel count");
+    ASSERT_TRUE(
+        global_fourier_recommended_channel_count(
+            sample_count, available, 2U, mono_bytes) == 1U,
+        "a stereo source should fall back to one mono FFT model when only one model fits");
+    ASSERT_TRUE(
+        global_fourier_recommended_channel_count(
+            sample_count, available, 2U, stereo_bytes) == 2U,
+        "a stereo source should preserve stereo when both FFT models fit");
+    ASSERT_TRUE(
+        global_fourier_recommended_channel_count(
+            sample_count, available, 2U, mono_bytes - 1U) ==
+            0U,
+        "whole-file FFT should be unavailable when even the mono model exceeds the limit");
+    return 0;
+}
+
 int main(void) {
     if (test_sine_length() != 0) return 1;
     if (test_hann_window() != 0) return 1;
@@ -545,6 +671,8 @@ int main(void) {
     if (test_stft_spectrogram_only() != 0) return 1;
     if (test_stft_incremental_reconstruction() != 0) return 1;
     if (test_stft_progressive_quality() != 0) return 1;
+    if (test_strided_stereo_reconstruction() != 0) return 1;
+    if (test_global_fourier_memory_policy() != 0) return 1;
 
     puts("All DSP tests passed.");
     return 0;

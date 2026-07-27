@@ -34,6 +34,7 @@ typedef enum {
 typedef struct {
     const float *source_samples;
     size_t source_count;
+    size_t source_stride;
     unsigned int sample_rate;
     uint32_t fft_size;
     int maximum_component_count;
@@ -73,9 +74,33 @@ typedef struct {
 void global_fourier_job_init(GlobalFourierJob *job);
 void global_fourier_job_free(GlobalFourierJob *job);
 int global_fourier_available_component_count(size_t sample_count);
+size_t global_fourier_estimated_analysis_bytes(
+    size_t sample_count,
+    int maximum_component_count);
+size_t global_fourier_estimated_multichannel_analysis_bytes(
+    size_t sample_count,
+    int maximum_component_count,
+    unsigned int channel_count);
+bool global_fourier_analysis_fits_memory(
+    size_t sample_count,
+    int maximum_component_count,
+    unsigned int channel_count,
+    size_t byte_limit);
+unsigned int global_fourier_recommended_channel_count(
+    size_t sample_count,
+    int maximum_component_count,
+    unsigned int source_channel_count,
+    size_t byte_limit);
 bool global_fourier_job_begin_analysis(GlobalFourierJob *job,
                                        const SampleBuffer *source,
                                        int maximum_component_count);
+bool global_fourier_job_begin_analysis_strided(
+    GlobalFourierJob *job,
+    const float *source_samples,
+    size_t source_count,
+    size_t source_stride,
+    unsigned int sample_rate,
+    int maximum_component_count);
 bool global_fourier_job_begin_reconstruction(GlobalFourierJob *job,
                                              int component_count);
 size_t global_fourier_job_process(GlobalFourierJob *job,
