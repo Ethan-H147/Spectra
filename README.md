@@ -1,335 +1,330 @@
 # Spectra
 
-Spectra is a desktop Fourier audio engine for harmonic synthesis, spectral visualization, and educational DSP exploration.
+Spectra is a C99 desktop application for studying Fourier representations of audio. Raylib supplies the window, input, audio device, and decoded audio samples.
 
-Spectra explores how musical timbre emerges from harmonic structure. It lets users generate a tone from harmonic sliders, visualize the resulting waveform and frequency spectrum, and hear the result immediately in a local desktop window.
+The application generates tones, imports audio files, analyzes selected regions, and reconstructs audio from reduced spectral representations. Each reconstruction path models a different mathematical object.
 
-## Current Status
+Spectra keeps these terms distinct:
 
-This version is a C + Raylib desktop app implementing Milestones 1 through 7:
+- A **harmonic** is an integer multiple of an estimated fundamental frequency.
+- An **FFT bin** is one sample of a discrete Fourier transform.
+- A **Fourier component** stores one complex FFT coefficient and its bin index.
+- An **STFT frame** is a windowed time segment with its own Fourier components.
+- A **reconstruction** is an audio buffer produced from a selected spectral representation.
 
-- Desktop window built with Raylib
-- Sine wave and additive synthesis generation
-- First 16 harmonic amplitude sliders
-- Presets for sine, square-like, saw-like, clarinet-like, and bright string-like tones
-- ADSR envelope to reduce clicks
-- Normalization to avoid clipping
-- Local audio playback through Raylib audio
-- WAV export for generated tones
-- Desktop waveform drawing
-- FFT-based frequency spectrum drawing
-- Spectral peak detection for the generated tone
-- Sample-based fundamental pitch estimation using YIN-style periodicity detection
-- Musical note, cents offset, and confidence readout for generated tones
-- WAV, MP3, OGG, and FLAC import through a native picker or drag-and-drop
-- Mono/stereo source preservation with a separate mono reference for analysis
-- Explicit downmixing for sources with more than two channels
-- Full-file and selected-region playback
-- Interactive region selection with waveform, FFT, peaks, and pitch analysis
-- Harmonic peak matching around integer multiples of the estimated fundamental
-- Relative-amplitude harmonic tables with explicit missing-partial rows
-- Additive resynthesis of stable pitched regions with original/model A/B playback
-- Phase-preserving reconstruction of a selected Hann-windowed frame from its strongest Fourier bins
-- Adjustable Top-N component playback and WAV export for both reconstruction models
-- Whole-file Fourier analysis with one frequency ranking for the complete imported recording
-- Fixed whole-file reconstructions across the complete one-sided, zero-padded FFT grid
-- Separate padded-bin and retained-energy budgets with presets and exact numeric controls
-- Time-varying STFT reconstructions with independently selected bins in every frame
-- Background whole-file FFT and STFT workers with safe cancellation and main-thread Raylib handoff
-- Reusable whole-file Fourier models plus a bounded 256 MB recent-reconstruction cache
-- Stereo-aware fixed and time-varying reconstructions with per-channel component budgets
-- 2048-sample Hann STFT spectrogram shared as a reference visualization for both modes
-- Full-timeline spectrogram rendering with frequency and time axes
-- Original/reconstruction A/B playback with pause, elapsed time, progress, and Save As WAV export
-- Professional multi-workspace desktop shell with persistent navigation
-- Overview page mapping the complete generated/uploaded audio pipeline
-- Working Spectrogram workspace with separate fixed and time-varying reconstruction modes
-- Settings page covering application, audio, analysis, and appearance defaults
-- Honest per-channel component and retained-energy labels
-- Native Windows per-monitor DPI behavior and application icon
-- DSP, audio import/export, background-runtime, cache, and layout regression tests
+The active application entry point is `src/main.c`. The root-level `main.c` and `wav.h` belong to an earlier experiment.
 
-Milestone 7 is the current final desktop roadmap milestone. It completes the
-current architecture and quality roadmap without preventing future features
-or later milestones.
+## Reconstruction models
 
-## How It Works
+| Model | Analysis scope | Selection unit | Phase | Output |
+| --- | --- | --- | --- | --- |
+| Additive synthesizer | Generated tone | 16 integer harmonics | Zero initial oscillator phase | Mono |
+| Harmonic resynthesis | Selected pitched region | Detected integer harmonics | Discarded | Mono |
+| Fourier frame | One centered Hann frame | Ranked complex Fourier components | Preserved | Mono frame |
+| Mono FFT | Complete audio file | Fixed one-sided FFT bins | Preserved | Mono |
+| Stereo FFT | Complete left and right channels | Fixed FFT bins per channel | Preserved | Stereo |
+| STFT | Overlapping frames | FFT bins per frame and channel | Preserved | Source channel layout |
 
-Generated sound pipeline:
+The component counts from these models are not interchangeable. A Top-5 fixed FFT uses five frequencies for the complete file. A Top-5 STFT selects five frequencies in every frame and channel.
 
-```text
-harmonic settings
--> additive synthesis
--> ADSR envelope
--> normalization
--> Raylib sound buffer
--> playback
--> waveform, spectrum, peaks, and sample-derived pitch
-```
+Harmonic resynthesis also differs from both Fourier modes. It matches peaks near integer multiples of a detected fundamental. The model does not retain the original Fourier phase.
 
-Imported sound pipeline:
+## Signal processing
 
-```text
-audio file
--> decode
--> preserve mono/stereo source audio
--> create a mono analysis reference
--> selected region
--> FFT, peaks, and pitch
--> integer-harmonic extraction
--> additive resynthesis
--> original/model A/B playback
-```
+### Additive synthesis
 
-Spectra also ranks the complex Fourier coefficients of the centered analysis frame. Unlike the phase-free harmonic model, the Top-N frame reconstruction retains each selected bin's phase and uses an inverse FFT to rebuild the windowed frame.
+The synthesizer renders 16 sinusoidal harmonics at a 44.1 kHz sample rate. Each harmonic has an independent amplitude.
 
-For complete-file reconstruction, Spectra can build either one reusable
-zero-padded Fourier model from the mono analysis reference or one model per
-preserved source channel. The mono model is the safe default when a long
-stereo transform would exceed the configured memory limit:
+Five presets define initial harmonic profiles:
 
-```text
-mono reference or preserved mono/stereo audio
--> zero-pad to a power-of-two length
--> one mono whole-file FFT or one FFT per source channel
--> rank one fixed set of complex frequency coefficients in each model
--> keep the strongest N coefficients and their conjugate mirror pairs
--> inverse FFT
--> trim to the original duration
--> explicitly labeled mono/stereo padded-FFT-bin playback and WAV export
-```
+- Sine
+- Square-like
+- Saw-like
+- Clarinet-like
+- Bright string
 
-Top 5 therefore means five fixed sinusoidal frequencies for the entire file,
-not five new bins in every time frame. A speech recording cannot preserve its
-phoneme timing or natural pitch motion at that setting. The STFT spectrogram is
-computed separately for visualization and does not choose reconstruction
-components.
+The renderer applies an ADSR envelope and normalizes the result before playback. The workspace displays the generated waveform, magnitude spectrum, spectral peaks, and pitch estimate.
 
-The alternative **Time-varying STFT** mode restores the earlier behavior:
+### Audio import
 
-```text
-mono or stereo audio
--> overlapping 2048-sample Hann frames
--> rank frequency bins independently in each frame and channel
--> keep the strongest N bins and their phases
--> inverse FFT and normalized overlap-add
--> recognizable full-length playback and WAV export
-```
+Spectra imports WAV, MP3, OGG, and FLAC files. The import layer reads files through UTF-8-aware platform functions.
 
-This mode can preserve changing speech and music with far fewer components
-because its selected frequencies are allowed to change every 512 samples. In
-fixed whole-file mode, the bin-count controls explicitly refer to the
-one-sided bins of the power-of-two, zero-padded FFT. Zero-padding makes the
-frequency grid denser for efficient processing; it does not add source
-information. The separate energy mode chooses the smallest strongest-bin set
-that reaches an exact retained-spectral-energy target in every channel.
-Time-varying STFT mode accepts 1-1,023 components per frame per channel.
-All whole-file DSP runs on background workers. The reusable Fourier models
-remain in memory for the imported file, while recently rendered component
-counts can be restored from a bounded cache without recomputation.
+Raylib decodes the file from memory. Spectra then stores two representations:
 
-Spectra uses the Fourier transform to represent sound as a combination of frequencies. Additive synthesis reverses this idea by summing sine waves at harmonic multiples of a fundamental frequency.
+1. An interleaved playback buffer that preserves mono or stereo channels.
+2. A mono analysis reference for pitch, waveform, spectrum, and spectrogram calculations.
 
-The current spectrum view applies a Hann window before a readable radix-2 FFT implementation. FFT bins are mapped to frequency with:
+Sources with more than two channels produce a mono playback and analysis buffer. Spectra does not define a surround-channel mapping.
 
-```text
-frequency = binIndex * sampleRate / fftSize
-```
+Full-file reconstruction rejects audio longer than 600 seconds.
 
-## Project Layout
+### Region analysis
 
-```text
-CMakeLists.txt
-src/
-  main.c
-  audio/
-    audio_engine.c
-    audio_engine.h
-    audio_import.c
-    audio_import.h
-    reconstruction_cache.c
-    reconstruction_cache.h
-  dsp/
-    additive_synth.c
-    additive_synth.h
-    channel_mix.c
-    channel_mix.h
-    dsp_types.c
-    dsp_types.h
-    fft.c
-    fft.h
-    fourier_reconstruction.c
-    fourier_reconstruction.h
-    global_fourier_reconstruction.c
-    global_fourier_reconstruction.h
-    harmonic_analysis.c
-    harmonic_analysis.h
-    harmonic_resynthesis.c
-    harmonic_resynthesis.h
-    pitch_detection.c
-    pitch_detection.h
-    signal_utils.c
-    signal_utils.h
-    stft_reconstruction.c
-    stft_reconstruction.h
-    windowing.c
-    windowing.h
-    waveform_summary.c
-    waveform_summary.h
-  ui/
-    app_shell.c
-    app_shell.h
-    theme.c
-    theme.h
-    widgets.c
-    widgets.h
-    spectrogram_layout.c
-    spectrogram_layout.h
-  platform/
-    background_task.c
-    background_task.h
-    file_io.c
-    file_io.h
-    windows_app.c
-    windows_app.h
-tests/
-  audio_import_tests.c
-  dsp_tests.c
-  runtime_tests.c
-  ui_layout_tests.c
-```
+Audio Analysis selects a region from the mono analysis reference. The analysis path computes:
 
-The older root-level `main.c` and `wav.h` are kept as legacy experiment files; the active desktop app entry point is `src/main.c`.
+- A 2,048-bin waveform summary for display.
+- A Hann-windowed magnitude spectrum.
+- Up to 64 local spectral peaks.
+- A YIN-style periodicity estimate.
+- A musical note and cents offset.
 
-## Run Natively On Windows
+Spectrum analysis uses at most 16,384 centered samples from the selected region. Pitch analysis uses the complete selected region.
 
-The WSL build can open a window through WSLg, but audio may not route to your Windows headphones. For normal Windows audio, build Spectra as a native Windows executable.
+### Integer-harmonic resynthesis
 
-Recommended route: Visual Studio Build Tools + vcpkg + CMake.
+The harmonic path requires a valid pitch estimate with at least 0.60 confidence. It searches for spectral peaks near the first 24 integer multiples.
 
-1. Install Visual Studio 2022 Build Tools with the **Desktop development with C++** workload.
-2. Install CMake if it is not already installed.
-3. Install Raylib with vcpkg:
+The resynthesizer creates stationary sinusoids from the matched amplitudes. It does not reproduce transients, broadband noise, phase relationships, or time-varying articulation.
+
+### Fourier-frame reconstruction
+
+The frame path analyzes one centered, windowed FFT frame. It ranks the complex one-sided Fourier coefficients by magnitude.
+
+Inverse reconstruction restores each selected coefficient with its conjugate mirror. This path preserves phase within the frame.
+
+The output represents one short frame. It does not represent the complete audio file.
+
+### Fixed whole-file FFT
+
+The fixed model zero-pads the complete source to the next power-of-two length. It computes one radix-2 FFT for each modeled channel.
+
+The ranker includes every independent one-sided FFT bin:
+
+- DC at bin 0.
+- Positive-frequency bins.
+- Nyquist at the final independent bin.
+
+The inverse transform restores conjugate mirror bins for real-valued output. Spectra trims the resulting buffer to the original frame count.
+
+Mono FFT analyzes the mono analysis reference. Stereo FFT builds separate models for the preserved left and right channels.
+
+The fixed model supports two selection methods:
+
+1. **FFT-bin count** selects an exact number of ranked bins.
+2. **Spectral energy** selects the smallest count that reaches an energy target.
+
+Stereo energy selection uses one shared count. That count reaches the target in each channel.
+
+Zero padding reduces the spacing between FFT-bin frequencies. It does not add source information or improve the original frequency resolution.
+
+### Time-varying STFT
+
+The STFT path uses a 2,048-sample Hann window and a 512-sample hop. It centers each frame with half-window padding.
+
+Each frame ranks 1,023 positive-frequency bins between DC and Nyquist. The selected count applies independently to every frame and channel.
+
+The inverse path restores conjugate symmetry and runs an inverse FFT. Normalized overlap-add combines the frames.
+
+This model represents time-varying frequency content. Its count defines a per-frame budget, not a complete-file budget.
+
+### Spectrogram
+
+Spectra computes a visualization-only STFT from the mono analysis reference. The texture contains 256 time bins and 128 frequency bins.
+
+The displayed frequency range ends at 12 kHz or the source Nyquist frequency. Pixel values store decibels from the frame magnitude spectrum.
+
+The visualization does not select reconstruction bins. Mono FFT, Stereo FFT, and STFT use separate reconstruction state.
+
+## Memory and concurrency
+
+### Fixed-model memory policy
+
+The default fixed-model limit equals 768 MB. Settings cycles through 512 MB, 768 MB, 1 GB, and 1.5 GB.
+
+The estimator counts transform arrays and ranked Fourier components. The limit governs fixed-model allocations, not total process memory.
+
+For stereo sources, startup selects the largest channel configuration that fits:
+
+1. Stereo FFT when two models fit.
+2. Mono FFT when only one model fits.
+3. No fixed model when one model exceeds the limit.
+
+STFT remains available when the fixed model exceeds the limit. Changing the memory limit does not rebuild a model that already exists.
+
+### Background tasks
+
+Full-file DSP runs outside the UI thread:
+
+- Spectrogram generation.
+- Fixed whole-file FFT analysis.
+- Fixed whole-file inverse reconstruction.
+- STFT inverse reconstruction.
+
+`src/platform/background_task.c` uses a Windows thread or a POSIX thread. A lock protects cancellation, completion, and progress state.
+
+The UI thread joins completed workers before it moves output buffers into Raylib audio objects or GPU textures. Mode changes and file unloads request cancellation before they release worker-owned state.
+
+### Reconstruction cache
+
+The session cache stores six recent full-file reconstructions. Its total audio-data limit equals 256 MB.
+
+Each cache key contains:
+
+- Reconstruction algorithm.
+- Selected component count.
+- Output channel count.
+
+The channel count prevents a mono buffer from satisfying a stereo request. Cache insertion and retrieval transfer buffer ownership instead of copying the audio.
+
+## Application workspaces
+
+Spectra contains six workspaces:
+
+1. **Overview** describes the generated-audio and imported-audio paths.
+2. **Synthesizer** edits harmonic amplitudes and generated-tone parameters.
+3. **Audio Analysis** imports audio and analyzes a selected region.
+4. **Harmonic Lab** compares harmonic and Fourier-frame reconstructions.
+5. **Spectrogram** controls Mono FFT, Stereo FFT, and STFT reconstruction.
+6. **Settings** controls text scale and the fixed-model memory limit.
+
+The shell keeps a fixed navigation rail and a full-width status bar. F11 toggles borderless full screen. F1 opens the Help Center.
+
+Number keys 1 through 5 select the five primary workspaces. The Settings button remains in the navigation rail.
+
+The default window measures 1,600 by 900 pixels. The minimum window measures 1,100 by 800 pixels.
+
+Text scale starts at 110 percent. Settings supports values from 90 through 140 percent.
+
+Spectra loads Segoe UI on Windows when the font exists. A Chinese fallback font loads only after a filename requires non-ASCII glyphs.
+
+## Source organization
+
+| Path | Responsibility |
+| --- | --- |
+| `src/main.c` | Application state, worker orchestration, playback routing, exports, and page dispatch |
+| `src/audio/audio_import.c` | Decoding, Unicode paths, channel preservation, and mono reference generation |
+| `src/audio/audio_engine.c` | Raylib audio objects, transport state, and PCM WAV export |
+| `src/audio/reconstruction_cache.c` | Bounded ownership-transferring reconstruction cache |
+| `src/dsp/additive_synth.c` | Harmonic synthesis and ADSR rendering |
+| `src/dsp/fft.c` | Dependency-free radix-2 complex FFT |
+| `src/dsp/pitch_detection.c` | YIN-style pitch estimation and note conversion |
+| `src/dsp/harmonic_analysis.c` | Integer-harmonic peak matching |
+| `src/dsp/harmonic_resynthesis.c` | Stationary phase-free harmonic synthesis |
+| `src/dsp/fourier_reconstruction.c` | Centered Fourier-frame analysis and inverse reconstruction |
+| `src/dsp/global_fourier_reconstruction.c` | Incremental fixed whole-file FFT analysis and inverse reconstruction |
+| `src/dsp/stft_reconstruction.c` | Spectrogram generation and STFT inverse reconstruction |
+| `src/dsp/channel_mix.c` | Mono downmix and multichannel interleaving |
+| `src/platform/background_task.c` | Cancellable worker abstraction |
+| `src/platform/file_io.c` | UTF-8-aware file operations |
+| `src/platform/windows_app.c` | Native dialogs, DPI setup, icon handling, and Windows process setup |
+| `src/ui/app_shell.c` | Workspace rendering and action collection |
+| `src/ui/spectrogram_layout.c` | Testable Spectrogram geometry |
+| `src/ui/theme.c` | Font loading, glyph coverage, color values, and text scale |
+| `src/ui/help_center.c` | Workspace tutorials |
+
+## Native Windows build
+
+The Windows build requires:
+
+- CMake 3.20 or newer.
+- Visual Studio 2022 C++ Build Tools.
+- vcpkg.
+- `raylib:x64-windows`.
+- `glfw3:x64-windows`.
+
+Configure the project:
 
 ```powershell
-git clone https://github.com/microsoft/vcpkg C:\vcpkg
-C:\vcpkg\bootstrap-vcpkg.bat
-C:\vcpkg\vcpkg install raylib:x64-windows
+cmake -S . -B build-windows `
+  -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 ```
 
-4. Open PowerShell in the project folder from Windows, not inside WSL:
+Build the Release configuration:
 
 ```powershell
-cd C:\Users\huyus\Projects\C-Spectra
-cmake -S . -B build-windows -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 cmake --build build-windows --config Release
+```
+
+Run the native executable:
+
+```powershell
 .\build-windows\Release\spectra_desktop.exe
 ```
 
-The Windows build enables `SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL` by default because the current vcpkg Raylib package is built with custom frame control. Spectra therefore performs the buffer swap, Windows event polling, and 60 FPS pacing that Raylib's `EndDrawing()` intentionally omits in that configuration.
+The vcpkg Raylib build uses custom frame control on Windows. Spectra swaps the buffer, polls Windows events, and applies 60 Hz frame pacing.
 
-## Build and Run In WSL/Linux
+If PowerShell exposes both `PATH` and `Path`, remove the uppercase process variable before the build:
 
-Install Raylib and GCC for your platform. On Linux/WSL with Raylib available:
-
-```bash
-make
-make run
+```powershell
+[Environment]::SetEnvironmentVariable('PATH', $null, 'Process')
+& 'C:\Program Files\CMake\bin\cmake.exe' --build build-windows --config Release
 ```
-
-The WSL/Linux app binary is written to `build/spectra_desktop`.
 
 ## Tests
 
-WSL/Linux:
+CMake builds four test executables:
 
-```bash
-make test
-```
+| Test | Coverage |
+| --- | --- |
+| `dsp_tests` | Synthesis, FFT, pitch, harmonic analysis, fixed FFT, STFT, channels, energy, and memory policy |
+| `audio_import_tests` | Unicode paths, decoding, stereo preservation, and stereo WAV export |
+| `ui_layout_tests` | Spectrogram geometry at minimum, desktop, full-screen, and ultrawide sizes |
+| `runtime_tests` | Worker completion, cancellation, cache ownership, eviction, and channel-aware keys |
 
-Windows CMake:
+Build and run every test:
 
 ```powershell
 cmake --build build-windows --config Release
 ctest --test-dir build-windows -C Release --output-on-failure
 ```
 
-The tests check sine generation length, Hann window values, additive synthesis normalization, spectral peak detection, FFT output, clean-tone pitch accuracy, missing-fundamental recovery, musical-note mapping, silence rejection, channel mixing/interleaving, waveform summarization, harmonic matching, resynthesis safety, Fourier ranking, strided stereo FFT/STFT reconstruction, visualization-only STFT output, spectrogram dimensions, full-bin inverse reconstruction, Unicode-path import, stereo WAV round trips, worker completion/cancellation, bounded cache ownership/eviction, and responsive Spectrogram layouts without overlap.
+Run the DSP suite directly:
 
-## Controls
+```powershell
+.\build-windows\Release\dsp_tests.exe
+```
 
-- Use the left workspace rail or number keys **1–5** to switch between Overview, Synthesizer, Audio Analysis, Harmonic Lab, and Spectrogram.
-- Open **Settings** with the gear button at the lower-left corner.
-- Adjust interface typography from **90%–140%** with the A− / A+ controls under Settings → Appearance. The redesigned 100% baseline is readable, Spectra starts at 110%, and clicking the percentage resets it.
-- Press **Play tone** or the spacebar to hear the current tone.
-- In **Audio Analysis**, choose or drop a WAV, MP3, OGG, or FLAC file, adjust the selected region, and press **Analyze selected region**.
-- Use **Play all**, **Play region**, and **Stop** to compare the source with the region being analyzed.
-- Open **Harmonic Lab** after analysis to compare the original region with its phase-free harmonic model.
-- Adjust **Strongest frequency components** to rebuild the centered windowed frame with a different Top-N Fourier budget.
-- Use **Play frame** and **Play Top-N** for a phase-preserving frame comparison.
-- In **Spectrogram**, use the fixed **Mono FFT** or **Stereo FFT** models for the sparse sine-wave build-up effect, or **STFT** for a more recognizable time-varying reconstruction.
-- Choose **Mono FFT** for the memory-safe fixed model, **Stereo FFT** to preserve separate left/right models, or **STFT** for a changing per-frame model. Long stereo files automatically start in Mono FFT.
-- Under **FFT bins**, choose a padded-bin preset or type an exact count. The count is per channel only in Stereo FFT.
-- Under **Energy**, choose or type a retained-spectral-energy target; Spectra resolves a shared per-channel count that reaches the target in every channel.
-- Under **Settings**, click **Whole-file FFT memory** to cycle between 512 MB, 768 MB, 1 GB, and 1.5 GB. Raising it can unlock Stereo FFT for long files and intentionally allows higher RAM use.
-- Use **Play original** and **Play Top-N** to compare the complete recording. The shared player provides pause, elapsed time, progress, and stop controls; export uses a mode-specific WAV filename.
-- Resize or maximize the window; the workspace reflows to the live window size while the sidebar stays left and the footer spans the bottom edge.
-- Press **F11** to enter or leave borderless full screen.
-- Use the fundamental, duration, and master gain sliders to shape the generated sound.
-- Select a preset to load a harmonic profile.
-- Adjust harmonic sliders to directly edit timbre.
-- Press **Export WAV** to write `spectra-tone.wav`.
+## Windows package
 
-## Technical Concepts
+CPack creates a portable ZIP archive:
 
-- Fourier transform
-- Fast Fourier transform (FFT)
-- Hann windowing
-- Harmonic series
-- Additive synthesis
-- ADSR envelope
-- Spectral peak detection
-- YIN-style pitch estimation
-- Cumulative mean normalized difference
-- Harmonic peak matching in cents
-- Complex Fourier phase
-- Inverse FFT reconstruction
-- Short-time Fourier transform (STFT)
-- Fixed-component whole-file inverse FFT
-- Time-varying inverse STFT and normalized overlap-add
-- Progressive spectral reconstruction
+```powershell
+cmake --build build-windows --config Release --target package
+```
 
-## Limitations
+The command writes `build-windows\Spectra-1.0.0-windows-x64.zip`.
 
-Spectra is an educational DSP project, not a commercial pitch detector or production audio engine.
+The archive contains:
 
-Current limitations:
+- `spectra_desktop.exe`
+- Raylib and GLFW runtime libraries
+- Windows version metadata and manifest
+- Application icon
+- License
+- README
+- Logo assets
 
-- Imported audio decoding and selected-region analysis begin synchronously; very large files may take a moment to load.
-- Whole-file FFT and STFT work runs on background workers, but imports remain limited to ten minutes for predictable memory use.
-- The fixed whole-file model starts with a 768 MB safety budget. When a long stereo transform would exceed it, Spectra automatically uses the one-model Mono FFT path; the user can explicitly select Stereo FFT and raise the session limit up to 1.5 GB in Settings.
-- The complete fixed-mode bin range comes from a zero-padded power-of-two transform. It is a computational grid, not a count of independent audible frequencies or source information.
-- Long or high-sample-rate files can still require substantial memory and processing time even though the UI remains responsive.
-- Mono and stereo files preserve their output layout. Sources with more than two channels are explicitly downmixed to mono because surround-channel mapping is outside the current roadmap.
-- The pitch, waveform, and spectrogram views use a mono reference even when reconstruction and full-file playback remain stereo.
-- The reconstruction cache is session-local and bounded to 256 MB; an evicted setting is recomputed from the reusable model.
-- Imported-audio pitch estimates are most useful on stable, pitched regions.
-- Harmonic resynthesis is intentionally phase-free and stationary, so it approximates pitched timbre rather than preserving transients, noise, or changing articulation.
-- Whole-file Top-N entries are fixed FFT frequencies, not necessarily integer musical harmonics of a detected fundamental.
-- Time-varying Top-N entries are selected independently per frame and channel and should not be interpreted as one fixed set of physical harmonics.
-- The FFT implementation is intentionally readable and dependency-free, not highly optimized.
-- Spectra does not use AI or machine learning.
-- Spectra does not perfectly identify instruments or timbre.
+## Linux build
 
-## Roadmap
+The Makefile builds the same `src/main.c` entry point when Raylib exists on the host system:
 
-- Milestone 3 (complete): estimate pitch from generated sample buffers and display frequency, note, cents, and confidence.
-- Milestone 4 (complete): load WAV, MP3, OGG, and FLAC audio, provide playback/region selection, and convert analysis data to mono.
-- Milestone 5A (complete): extract true harmonics from pitched sounds and resynthesize an additive approximation.
-- Milestone 5B (complete): reconstruct a selected frame from its strongest phase-preserving Fourier components.
-- Milestone 6 (complete): add separate fixed whole-file and time-varying STFT Top-N reconstruction modes, spectrogram rendering, arbitrary component counts, A/B playback, and WAV export.
-- Milestone 7 (complete): preserve mono/stereo reconstruction, reuse whole-file models and recent results, move full-file DSP to cancellable background workers, improve Windows DPI behavior, and expand UI, help, and regression coverage.
+```bash
+make
+make test
+make run
+```
 
-Milestone 7 is the final milestone in the current desktop roadmap. Future
-ideas can be tracked as new milestones instead of silently expanding this
-roadmap.
+The Makefile writes the application to `build/spectra_desktop`.
+
+## Current constraints
+
+- Imported-file decoding runs on the UI thread.
+- Selected-region analysis runs on the UI thread.
+- Full-file reconstruction accepts at most 600 seconds of audio.
+- Fixed whole-file FFT models allocate memory in proportion to the padded transform size.
+- The 1.5 GB setting permits a large model allocation during the current session.
+- Settings do not persist after process exit.
+- The cache does not persist after process exit.
+- The pitch estimator requires a stable periodic signal.
+- Harmonic resynthesis discards phase and time-varying articulation.
+- Fixed FFT bins do not represent detected musical harmonics.
+- STFT component counts apply separately to each frame and channel.
+- Retained spectral energy does not measure perceptual similarity.
+- Spectrogram analysis uses the mono analysis reference.
+- Sources with more than two channels produce mono output.
+- The FFT favors readable implementation code over library-level optimization.
+- Spectra does not identify instruments and does not use machine learning.
+
+## License
+
+Spectra uses the license in `LICENSE`.
