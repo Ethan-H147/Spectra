@@ -28,6 +28,11 @@ typedef struct {
     bool toggle_help;
 } AppShellFrame;
 
+typedef enum {
+    PEAK_READOUT_INTERPOLATED = 0,
+    PEAK_READOUT_FFT_BINS
+} PeakReadoutMode;
+
 typedef struct {
     bool loaded;
     bool analyzed;
@@ -49,6 +54,8 @@ typedef struct {
     const Peak *peaks;
     int peak_count;
     const PitchEstimate *pitch;
+    unsigned int analysis_revision;
+    PeakReadoutMode peak_readout_mode;
 } AudioAnalysisView;
 
 typedef struct {
@@ -58,6 +65,8 @@ typedef struct {
     bool toggle_play_pause;
     bool stop;
     bool analyze_region;
+    bool select_peak_readout_mode;
+    PeakReadoutMode peak_readout_mode;
     float region_start_seconds;
     float region_duration_seconds;
 } AudioAnalysisActions;

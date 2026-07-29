@@ -8,9 +8,11 @@
 typedef struct {
     Font font;
     Font bold_font;
+    Font display_font;
     Font fallback_font;
     bool owns_font;
     bool owns_bold_font;
+    bool owns_display_font;
     bool owns_fallback_font;
     float text_scale;
     Color background;

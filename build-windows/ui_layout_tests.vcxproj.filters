@@ -7,6 +7,9 @@
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\spectrogram_layout.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\spectrum_viewport.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="C:\Users\huyus\Projects\C-Spectra\CMakeLists.txt" />

@@ -20,6 +20,13 @@ int find_peaks(const Spectrum *spectrum,
                Peak *peaks,
                int max_peaks);
 
+int find_interpolated_peaks(const Spectrum *spectrum,
+                            float min_frequency,
+                            float max_frequency,
+                            float threshold_db,
+                            Peak *peaks,
+                            int max_peaks);
+
 int extract_harmonics(const Spectrum *spectrum,
                       float fundamental_frequency,
                       int harmonic_count,

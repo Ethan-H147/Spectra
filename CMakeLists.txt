@@ -95,6 +95,7 @@ target_link_libraries(audio_import_tests PRIVATE raylib)
 add_executable(ui_layout_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui_layout_tests.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/spectrogram_layout.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/spectrum_viewport.c"
 )
 target_include_directories(ui_layout_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
@@ -113,6 +114,7 @@ if(WIN32)
 elseif(UNIX AND NOT APPLE)
     target_link_libraries(dsp_tests PRIVATE m)
     target_link_libraries(audio_import_tests PRIVATE m)
+    target_link_libraries(ui_layout_tests PRIVATE m)
 endif()
 
 enable_testing()

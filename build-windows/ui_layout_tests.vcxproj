@@ -415,6 +415,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   <ItemGroup>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\tests\ui_layout_tests.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\spectrogram_layout.c" />
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\spectrum_viewport.c" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>

@@ -26,12 +26,18 @@ static int weakest_peak_index(const Peak *peaks, int peak_count) {
     return weakest;
 }
 
-int find_peaks(const Spectrum *spectrum,
-               float min_frequency,
-               float max_frequency,
-               float threshold_db,
-               Peak *peaks,
-               int max_peaks) {
+static void interpolate_peak(const Spectrum *spectrum,
+                             size_t bin,
+                             float *frequency,
+                             float *magnitude);
+
+static int find_peaks_internal(const Spectrum *spectrum,
+                               float min_frequency,
+                               float max_frequency,
+                               float threshold_db,
+                               Peak *peaks,
+                               int max_peaks,
+                               bool interpolate) {
     if (spectrum == NULL || peaks == NULL || max_peaks <= 0 || spectrum->count < 3) {
         return 0;
     }
@@ -48,6 +54,11 @@ int find_peaks(const Spectrum *spectrum,
         }
 
         Peak peak = {frequency, magnitude, db};
+        if (interpolate) {
+            interpolate_peak(
+                spectrum, i, &peak.frequency, &peak.magnitude);
+            peak.db = linear_to_db(peak.magnitude);
+        }
         if (peak_count < max_peaks) {
             peaks[peak_count++] = peak;
         } else {
@@ -60,6 +71,36 @@ int find_peaks(const Spectrum *spectrum,
 
     sort_peaks_by_frequency(peaks, peak_count);
     return peak_count;
+}
+
+int find_peaks(const Spectrum *spectrum,
+               float min_frequency,
+               float max_frequency,
+               float threshold_db,
+               Peak *peaks,
+               int max_peaks) {
+    return find_peaks_internal(spectrum,
+                               min_frequency,
+                               max_frequency,
+                               threshold_db,
+                               peaks,
+                               max_peaks,
+                               false);
+}
+
+int find_interpolated_peaks(const Spectrum *spectrum,
+                            float min_frequency,
+                            float max_frequency,
+                            float threshold_db,
+                            Peak *peaks,
+                            int max_peaks) {
+    return find_peaks_internal(spectrum,
+                               min_frequency,
+                               max_frequency,
+                               threshold_db,
+                               peaks,
+                               max_peaks,
+                               true);
 }
 
 static float clamp_local(float value, float minimum, float maximum) {
@@ -78,9 +119,9 @@ static void interpolate_peak(const Spectrum *spectrum,
         return;
     }
 
-    float left = spectrum->magnitudes[bin - 1U];
-    float center = spectrum->magnitudes[bin];
-    float right = spectrum->magnitudes[bin + 1U];
+    float left = logf(fmaxf(spectrum->magnitudes[bin - 1U], 1.0e-20f));
+    float center = logf(fmaxf(spectrum->magnitudes[bin], 1.0e-20f));
+    float right = logf(fmaxf(spectrum->magnitudes[bin + 1U], 1.0e-20f));
     float curvature = left - 2.0f * center + right;
     if (fabsf(curvature) < 1.0e-12f) {
         return;
@@ -89,7 +130,8 @@ static void interpolate_peak(const Spectrum *spectrum,
     float offset = clamp_local(0.5f * (left - right) / curvature, -0.5f, 0.5f);
     float bin_width = spectrum->frequencies[bin + 1U] - spectrum->frequencies[bin];
     *frequency += offset * bin_width;
-    *magnitude = fmaxf(0.0f, center - 0.25f * (left - right) * offset);
+    *magnitude =
+        expf(center - 0.25f * (left - right) * offset);
 }
 
 int extract_harmonics(const Spectrum *spectrum,

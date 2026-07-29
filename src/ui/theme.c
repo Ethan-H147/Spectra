@@ -1,9 +1,14 @@
 #include "ui/theme.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
 
 #define BASE_TEXT_SCALE 1.85f
+#define BODY_FONT_BASE_SIZE 32
+#define HEADING_FONT_BASE_SIZE 32
+#define DISPLAY_FONT_BASE_SIZE 64
+#define DISPLAY_FONT_THRESHOLD 42.0f
 
 typedef struct {
     const char *regular;
@@ -12,7 +17,7 @@ typedef struct {
 
 static const FontCandidate FONT_CANDIDATES[] = {
     {"assets/fonts/Inter-Regular.ttf", "assets/fonts/Inter-SemiBold.ttf"},
-    {"C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf"},
+    {"C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/seguisb.ttf"},
     {"assets/fonts/DejaVuSans.ttf", "assets/fonts/DejaVuSans-Bold.ttf"},
     {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"},
     {"/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
@@ -20,20 +25,24 @@ static const FontCandidate FONT_CANDIDATES[] = {
 };
 
 static float body_text_spacing(float size) {
-    return size < 22.0f ? size * 0.018f : size * 0.006f;
+    return size < 22.0f ? size * 0.012f : 0.0f;
 }
 
 static float heading_text_spacing(float size) {
     return size >= 30.0f ? size * -0.012f : 0.0f;
 }
 
-static Font load_font_candidate(const char *path) {
+static float snap_text_pixel(float value) {
+    return floorf(value + 0.5f);
+}
+
+static Font load_font_candidate(const char *path, int base_size) {
     Font font = {0};
     if (path == NULL || !FileExists(path)) {
         return font;
     }
 
-    font = LoadFontEx(path, 64, NULL, 0);
+    font = LoadFontEx(path, base_size, NULL, 0);
     if (font.texture.id > 0) {
         SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
     }
@@ -53,18 +62,27 @@ static bool text_needs_fallback(const char *text) {
 
 static Font theme_font_for_text(const AppTheme *theme,
                                 const char *text,
-                                bool heading) {
+                                bool heading,
+                                float scaled_size) {
     if (theme != NULL && theme->owns_fallback_font &&
         text_needs_fallback(text)) {
         return theme->fallback_font;
     }
-    return heading ? theme->bold_font : theme->font;
+    if (!heading) {
+        return theme->font;
+    }
+    return scaled_size >= DISPLAY_FONT_THRESHOLD
+               ? theme->display_font
+               : theme->bold_font;
 }
 
 static void unload_owned_fonts(AppTheme *theme) {
     if (theme == NULL) return;
     if (theme->owns_fallback_font) {
         UnloadFont(theme->fallback_font);
+    }
+    if (theme->owns_display_font) {
+        UnloadFont(theme->display_font);
     }
     if (theme->owns_bold_font) {
         UnloadFont(theme->bold_font);
@@ -74,9 +92,11 @@ static void unload_owned_fonts(AppTheme *theme) {
     }
     theme->font = GetFontDefault();
     theme->bold_font = GetFontDefault();
+    theme->display_font = GetFontDefault();
     theme->fallback_font = GetFontDefault();
     theme->owns_font = false;
     theme->owns_bold_font = false;
+    theme->owns_display_font = false;
     theme->owns_fallback_font = false;
 }
 
@@ -88,9 +108,11 @@ void theme_init(AppTheme *theme) {
     *theme = (AppTheme){
         .font = GetFontDefault(),
         .bold_font = GetFontDefault(),
+        .display_font = GetFontDefault(),
         .fallback_font = GetFontDefault(),
         .owns_font = false,
         .owns_bold_font = false,
+        .owns_display_font = false,
         .owns_fallback_font = false,
         .text_scale = 1.10f,
         .background = {30, 30, 32, 255},
@@ -104,7 +126,8 @@ void theme_init(AppTheme *theme) {
     };
 
     for (size_t i = 0; i < sizeof(FONT_CANDIDATES) / sizeof(FONT_CANDIDATES[0]); i++) {
-        Font regular = load_font_candidate(FONT_CANDIDATES[i].regular);
+        Font regular = load_font_candidate(
+            FONT_CANDIDATES[i].regular, BODY_FONT_BASE_SIZE);
         if (regular.texture.id == 0) {
             continue;
         }
@@ -112,12 +135,22 @@ void theme_init(AppTheme *theme) {
         theme->font = regular;
         theme->owns_font = true;
 
-        Font bold = load_font_candidate(FONT_CANDIDATES[i].bold);
+        Font bold = load_font_candidate(
+            FONT_CANDIDATES[i].bold, HEADING_FONT_BASE_SIZE);
         if (bold.texture.id > 0) {
             theme->bold_font = bold;
             theme->owns_bold_font = true;
         } else {
             theme->bold_font = regular;
+        }
+
+        Font display = load_font_candidate(
+            FONT_CANDIDATES[i].bold, DISPLAY_FONT_BASE_SIZE);
+        if (display.texture.id > 0) {
+            theme->display_font = display;
+            theme->owns_display_font = true;
+        } else {
+            theme->display_font = theme->bold_font;
         }
         break;
     }
@@ -219,8 +252,15 @@ void theme_draw_text(const AppTheme *theme, const char *text, float x, float y, 
     }
 
     float scaled_size = theme_scaled_size(theme, size);
-    Font font = theme_font_for_text(theme, text, false);
-    DrawTextEx(font, text, (Vector2){x, y}, scaled_size, body_text_spacing(scaled_size), color);
+    Font font = theme_font_for_text(
+        theme, text, false, scaled_size);
+    DrawTextEx(font,
+               text,
+               (Vector2){snap_text_pixel(x),
+                         snap_text_pixel(y)},
+               scaled_size,
+               body_text_spacing(scaled_size),
+               color);
 }
 
 void theme_draw_heading(const AppTheme *theme, const char *text, float x, float y, float size, Color color) {
@@ -230,8 +270,15 @@ void theme_draw_heading(const AppTheme *theme, const char *text, float x, float 
     }
 
     float scaled_size = theme_scaled_size(theme, size);
-    Font font = theme_font_for_text(theme, text, true);
-    DrawTextEx(font, text, (Vector2){x, y}, scaled_size, heading_text_spacing(scaled_size), color);
+    Font font = theme_font_for_text(
+        theme, text, true, scaled_size);
+    DrawTextEx(font,
+               text,
+               (Vector2){snap_text_pixel(x),
+                         snap_text_pixel(y)},
+               scaled_size,
+               heading_text_spacing(scaled_size),
+               color);
 }
 
 float theme_scaled_size(const AppTheme *theme, float size) {
@@ -239,7 +286,8 @@ float theme_scaled_size(const AppTheme *theme, float size) {
         return size;
     }
 
-    return size * BASE_TEXT_SCALE * theme->text_scale;
+    return snap_text_pixel(
+        size * BASE_TEXT_SCALE * theme->text_scale);
 }
 
 int theme_measure_text(const AppTheme *theme, const char *text, float size) {
@@ -248,7 +296,8 @@ int theme_measure_text(const AppTheme *theme, const char *text, float size) {
     }
 
     float scaled_size = theme_scaled_size(theme, size);
-    Font font = theme_font_for_text(theme, text, false);
+    Font font = theme_font_for_text(
+        theme, text, false, scaled_size);
     Vector2 measured = MeasureTextEx(font, text, scaled_size, body_text_spacing(scaled_size));
     return (int)measured.x;
 }
@@ -259,7 +308,8 @@ int theme_measure_heading(const AppTheme *theme, const char *text, float size) {
     }
 
     float scaled_size = theme_scaled_size(theme, size);
-    Font font = theme_font_for_text(theme, text, true);
+    Font font = theme_font_for_text(
+        theme, text, true, scaled_size);
     Vector2 measured = MeasureTextEx(font, text, scaled_size, heading_text_spacing(scaled_size));
     return (int)measured.x;
 }

@@ -1,6 +1,7 @@
 #include "ui/app_shell.h"
 
 #include "ui/spectrogram_layout.h"
+#include "ui/spectrum_viewport.h"
 #include "ui/widgets.h"
 
 #include <math.h>
@@ -34,6 +35,16 @@ typedef struct {
     const char *shortcut;
     ShellIcon icon;
 } NavItem;
+
+typedef struct {
+    SpectrumViewport viewport;
+    float data_maximum_frequency;
+    unsigned int analysis_revision;
+    bool initialized;
+    bool dragging;
+} ImportedSpectrumInteraction;
+
+static ImportedSpectrumInteraction imported_spectrum_interaction = {0};
 
 static const NavItem NAV_ITEMS[] = {
     {APP_PAGE_OVERVIEW, "Overview", "1", SHELL_ICON_HOME},
@@ -370,7 +381,18 @@ static void draw_step(const AppTheme *theme, Rectangle bounds, const char *numbe
     float title_x = number_x + number_radius + 9.0f;
     float title_y = number_y - theme_scaled_size(theme, 13.0f) * 0.5f - 1.0f;
     theme_draw_heading(theme, title, title_x, title_y, 13.0f, theme->text);
-    theme_draw_text(theme, description, bounds.x + 16.0f, bounds.y + 62.0f, 11.5f, theme->muted_text);
+    float description_height = theme_scaled_size(theme, 11.5f);
+    float description_y =
+        bounds.y + bounds.height - UI_SPACE_2 - description_height;
+    draw_fitted_text(theme,
+                     description,
+                     bounds.x + UI_SPACE_2,
+                     description_y,
+                     bounds.width - UI_SPACE_4,
+                     11.5f,
+                     9.5f,
+                     theme->muted_text,
+                     false);
     if (!compact) {
         if (ready) shell_draw_badge(theme, (Rectangle){bounds.x + bounds.width - 92.0f, bounds.y + 14.0f, 74.0f, 23.0f},
                                     "READY", (Color){70, 190, 120, 255});
@@ -426,7 +448,7 @@ AppPage draw_overview_page(const AppTheme *theme, Rectangle workspace) {
 
     float signal_title_y = synth_card.y + synth_card.height + 24.0f;
     float step_y = signal_title_y + theme_scaled_size(theme, 19.0f) + 12.0f;
-    float step_height = fminf(100.0f, fmaxf(86.0f, workspace.height * 0.12f));
+    float step_height = fminf(104.0f, fmaxf(96.0f, workspace.height * 0.12f));
     theme_draw_heading(theme, "Signal path", workspace.x, signal_title_y, 19.0f, theme->text);
     const char *titles[] = {"Source", "Synthesis", "Spectrum", "Pitch", "Harmonics", "Resynthesis"};
     const char *details[] = {"Generated tone", "ADSR + gain", "FFT + peaks", "Estimated f0", "Peak matching", "Additive model"};
@@ -558,52 +580,570 @@ static void draw_waveform_overview(const AppTheme *theme,
                          theme->accent);
 }
 
-static void draw_imported_spectrum(const AppTheme *theme,
-                                   Rectangle bounds,
-                                   const AudioAnalysisView *view) {
-    DrawRectangleRec(bounds, (Color){21, 22, 25, 255});
-    for (int row = 0; row <= 4; row++) {
-        float y = bounds.y + bounds.height * (float)row / 4.0f;
-        DrawLine((int)bounds.x, (int)y, (int)(bounds.x + bounds.width), (int)y, (Color){50, 52, 57, 255});
+static SpectrumViewportRect spectrum_viewport_rect(Rectangle rectangle) {
+    SpectrumViewportRect result = {
+        rectangle.x,
+        rectangle.y,
+        rectangle.width,
+        rectangle.height,
+    };
+    return result;
+}
+
+static float spectrum_nice_axis_step(float span, int target_tick_count) {
+    if (span <= 0.0f || target_tick_count <= 0) return 1.0f;
+    float raw_step = span / (float)target_tick_count;
+    float magnitude = powf(10.0f, floorf(log10f(raw_step)));
+    float normalized = raw_step / magnitude;
+    float nice = 1.0f;
+    if (normalized > 5.0f) {
+        nice = 10.0f;
+    } else if (normalized > 2.0f) {
+        nice = 5.0f;
+    } else if (normalized > 1.0f) {
+        nice = 2.0f;
     }
-    if (view == NULL || !view->analyzed || view->spectrum == NULL || view->spectrum->count == 0U) {
-        const char *message = view != NULL && view->loaded ? "Choose a region and click Analyze region"
-                                                          : "Spectrum appears after import";
+    return nice * magnitude;
+}
+
+static void format_spectrum_frequency(float frequency,
+                                      float step,
+                                      char *text,
+                                      size_t text_size) {
+    if (frequency >= 1000.0f) {
+        float khz = frequency / 1000.0f;
+        if (step >= 1000.0f || khz >= 10.0f) {
+            snprintf(text, text_size, "%.0f kHz", khz);
+        } else {
+            snprintf(text, text_size, "%.1f kHz", khz);
+        }
+    } else if (step >= 100.0f) {
+        snprintf(text, text_size, "%.0f Hz", frequency);
+    } else if (step >= 10.0f) {
+        snprintf(text, text_size, "%.1f Hz", frequency);
+    } else {
+        snprintf(text, text_size, "%.2f Hz", frequency);
+    }
+}
+
+static void draw_spectrum_grid(const AppTheme *theme,
+                               Rectangle outer,
+                               Rectangle plot,
+                               const SpectrumViewport *viewport) {
+    SpectrumViewportRect viewport_plot = spectrum_viewport_rect(plot);
+    int horizontal_target = (int)fmaxf(2.0f, floorf(plot.width / 128.0f));
+    int vertical_target = (int)fmaxf(2.0f, floorf(plot.height / 48.0f));
+    float frequency_step = spectrum_nice_axis_step(
+        viewport->maximum_frequency - viewport->minimum_frequency,
+        horizontal_target);
+    float db_step = spectrum_nice_axis_step(
+        viewport->maximum_db - viewport->minimum_db,
+        vertical_target);
+    Color grid_color = {53, 55, 61, 185};
+    Color axis_color = {83, 86, 94, 220};
+    float label_size = plot.height < 88.0f ? 9.0f : 10.0f;
+    float rendered_label_size = theme_scaled_size(theme, label_size);
+
+    float first_frequency =
+        ceilf(viewport->minimum_frequency / frequency_step) * frequency_step;
+    int tick_guard = 0;
+    for (float frequency = first_frequency;
+         frequency <= viewport->maximum_frequency + frequency_step * 0.01f &&
+         tick_guard < 64;
+         frequency += frequency_step, tick_guard++) {
+        float x = spectrum_viewport_x_for_frequency(
+            viewport, viewport_plot, frequency);
+        DrawLineEx((Vector2){x, plot.y},
+                   (Vector2){x, plot.y + plot.height},
+                   1.0f,
+                   grid_color);
+        char label[48];
+        format_spectrum_frequency(frequency, frequency_step, label, sizeof(label));
+        int label_width = theme_measure_text(theme, label, label_size);
+        float label_x = x - (float)label_width * 0.5f;
+        label_x = fmaxf(outer.x + 2.0f,
+                        fminf(outer.x + outer.width - (float)label_width - 2.0f,
+                              label_x));
+        theme_draw_text(theme,
+                        label,
+                        label_x,
+                        plot.y + plot.height + 7.0f,
+                        label_size,
+                        theme->muted_text);
+    }
+
+    float first_db = ceilf(viewport->minimum_db / db_step) * db_step;
+    tick_guard = 0;
+    for (float db = first_db;
+         db <= viewport->maximum_db + db_step * 0.01f &&
+         tick_guard < 64;
+         db += db_step, tick_guard++) {
+        float y = spectrum_viewport_y_for_db(viewport, viewport_plot, db);
+        DrawLineEx((Vector2){plot.x, y},
+                   (Vector2){plot.x + plot.width, y},
+                   1.0f,
+                   grid_color);
+        char label[32];
+        snprintf(label, sizeof(label), "%.0f dB", db);
+        int label_width = theme_measure_text(theme, label, label_size);
+        theme_draw_text(theme,
+                        label,
+                        plot.x - (float)label_width - 8.0f,
+                        y - rendered_label_size * 0.5f,
+                        label_size,
+                        theme->muted_text);
+    }
+
+    DrawLineEx((Vector2){plot.x, plot.y},
+               (Vector2){plot.x, plot.y + plot.height},
+               1.0f,
+               axis_color);
+    DrawLineEx((Vector2){plot.x, plot.y + plot.height},
+               (Vector2){plot.x + plot.width, plot.y + plot.height},
+               1.0f,
+               axis_color);
+}
+
+static bool draw_spectrum_reset_control(const AppTheme *theme,
+                                        Rectangle bounds) {
+    Vector2 mouse = GetMousePosition();
+    bool hovered = CheckCollisionPointRec(mouse, bounds);
+    bool held = hovered && IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+    Color fill = held ? (Color){43, 46, 53, 245}
+                      : (hovered ? (Color){51, 55, 63, 245}
+                                 : (Color){31, 33, 38, 232});
+    Color border = hovered ? theme->accent : (Color){67, 70, 78, 230};
+    DrawRectangleRounded(bounds, 0.28f, 8, fill);
+    DrawRectangleRoundedLines(bounds, 0.28f, 8, border);
+    const char *label = "Reset view";
+    float label_size = 10.0f;
+    float rendered_size = theme_scaled_size(theme, label_size);
+    int label_width = theme_measure_heading(theme, label, label_size);
+    theme_draw_heading(theme,
+                       label,
+                       bounds.x + (bounds.width - (float)label_width) * 0.5f,
+                       bounds.y + (bounds.height - rendered_size) * 0.5f - 1.0f,
+                       label_size,
+                       theme->text);
+    return hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+}
+
+static bool draw_spectrum_peak_readout_control(
+    const AppTheme *theme,
+    Rectangle bounds,
+    PeakReadoutMode *selected_mode) {
+    if (selected_mode == NULL) return false;
+
+    const char *labels[] = {"Interpolated", "FFT bins"};
+    Vector2 mouse = GetMousePosition();
+    int selected_index =
+        *selected_mode == PEAK_READOUT_FFT_BINS ? 1 : 0;
+    float inset = 3.0f;
+    float segment_width =
+        (bounds.width - inset * 2.0f) / 2.0f;
+    bool changed = false;
+
+    DrawRectangleRounded(
+        bounds, 0.28f, 8, (Color){31, 33, 38, 232});
+    DrawRectangleRoundedLines(
+        bounds, 0.28f, 8, (Color){67, 70, 78, 230});
+
+    for (int index = 0; index < 2; index++) {
+        Rectangle hit = {
+            bounds.x + inset + segment_width * (float)index,
+            bounds.y + inset,
+            segment_width,
+            bounds.height - inset * 2.0f,
+        };
+        Rectangle visual = {
+            hit.x + 2.0f,
+            hit.y,
+            hit.width - 4.0f,
+            hit.height,
+        };
+        bool hovered = CheckCollisionPointRec(mouse, hit);
+        bool held = hovered &&
+                    IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+        bool selected = index == selected_index;
+        if (held) visual.y += 1.0f;
+
+        if (selected) {
+            DrawRectangleRounded(
+                visual,
+                0.24f,
+                8,
+                held ? (Color){61, 64, 72, 255}
+                     : (Color){53, 56, 64, 255});
+        } else if (hovered) {
+            DrawRectangleRounded(
+                visual, 0.24f, 8, (Color){43, 46, 53, 245});
+        }
+
+        float font_size = 10.0f;
+        int label_width =
+            theme_measure_heading(theme, labels[index], font_size);
+        float text_y =
+            hit.y +
+            (hit.height - theme_scaled_size(theme, font_size)) *
+                0.5f -
+            1.0f;
+        theme_draw_heading(
+            theme,
+            labels[index],
+            hit.x + (hit.width - (float)label_width) * 0.5f,
+            text_y,
+            font_size,
+            selected ? theme->text : theme->muted_text);
+
+        if (hovered &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
+            index != selected_index) {
+            *selected_mode =
+                index == 0 ? PEAK_READOUT_INTERPOLATED
+                           : PEAK_READOUT_FFT_BINS;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+static void draw_spectrum_hover_tooltip(const AppTheme *theme,
+                                        Rectangle outer,
+                                        Vector2 anchor,
+                                        int peak_index,
+                                        float frequency,
+                                        float db) {
+    char primary[64];
+    char secondary[96] = {0};
+    float width;
+    float height;
+    if (peak_index >= 0) {
+        snprintf(primary, sizeof(primary), "Peak %d", peak_index + 1);
+        snprintf(secondary, sizeof(secondary), "%.2f Hz   %.1f dB", frequency, db);
+        width = fmaxf((float)theme_measure_heading(theme, primary, 11.0f),
+                      (float)theme_measure_text(theme, secondary, 10.5f)) +
+                24.0f;
+        height = 62.0f;
+    } else {
+        char frequency_text[48];
+        format_spectrum_frequency(frequency, 1.0f, frequency_text, sizeof(frequency_text));
+        snprintf(primary, sizeof(primary), "%s   %.1f dB", frequency_text, db);
+        width = (float)theme_measure_text(theme, primary, 10.5f) + 24.0f;
+        height = 36.0f;
+    }
+
+    float x = anchor.x + 16.0f;
+    float y = anchor.y - height - 16.0f;
+    if (x + width > outer.x + outer.width - 8.0f) {
+        x = anchor.x - width - 16.0f;
+    }
+    if (y < outer.y + 8.0f) {
+        y = anchor.y + 16.0f;
+    }
+    x = fmaxf(outer.x + 8.0f,
+              fminf(outer.x + outer.width - width - 8.0f, x));
+    y = fmaxf(outer.y + 8.0f,
+              fminf(outer.y + outer.height - height - 8.0f, y));
+    Rectangle tooltip = {x, y, width, height};
+    DrawRectangleRounded(tooltip, 0.14f, 8, (Color){37, 39, 45, 248});
+    DrawRectangleRoundedLines(tooltip, 0.14f, 8, (Color){83, 87, 97, 255});
+    if (peak_index >= 0) {
+        theme_draw_heading(theme,
+                           primary,
+                           tooltip.x + 12.0f,
+                           tooltip.y + 8.0f,
+                           11.0f,
+                           theme->text);
+        theme_draw_text(theme,
+                        secondary,
+                        tooltip.x + 12.0f,
+                        tooltip.y + 34.0f,
+                        10.5f,
+                        theme->muted_text);
+    } else {
+        theme_draw_text(theme,
+                        primary,
+                        tooltip.x + 12.0f,
+                        tooltip.y + 9.0f,
+                        10.5f,
+                        theme->text);
+    }
+}
+
+static bool draw_imported_spectrum(
+    const AppTheme *theme,
+    Rectangle bounds,
+    const AudioAnalysisView *view,
+    PeakReadoutMode *selected_mode) {
+    DrawRectangleRec(bounds, (Color){20, 21, 24, 255});
+    DrawRectangleLinesEx(bounds, 1.0f, (Color){48, 50, 56, 255});
+    if (view == NULL || !view->analyzed || view->spectrum == NULL ||
+        view->spectrum->count == 0U) {
+        imported_spectrum_interaction.initialized = false;
+        imported_spectrum_interaction.dragging = false;
+        const char *message = view != NULL && view->loaded
+                                  ? "Choose a region and click Analyze region"
+                                  : "Spectrum appears after import";
         int width = theme_measure_text(theme, message, 14.0f);
         theme_draw_text(theme,
                         message,
                         bounds.x + (bounds.width - (float)width) * 0.5f,
-                        bounds.y + bounds.height * 0.5f - theme_scaled_size(theme, 14.0f) * 0.5f,
+                        bounds.y + bounds.height * 0.5f -
+                            theme_scaled_size(theme, 14.0f) * 0.5f,
                         14.0f,
                         theme->muted_text);
-        return;
+        float control_width = 168.0f;
+        Rectangle mode_control = {
+            bounds.x + bounds.width - control_width - 8.0f,
+            bounds.y + 8.0f,
+            control_width,
+            28.0f,
+        };
+        bool mode_hovered =
+            CheckCollisionPointRec(GetMousePosition(), mode_control);
+        SetMouseCursor(mode_hovered ? MOUSE_CURSOR_POINTING_HAND
+                                    : MOUSE_CURSOR_DEFAULT);
+        return draw_spectrum_peak_readout_control(
+            theme, mode_control, selected_mode);
     }
 
-    const float minimum_db = -90.0f;
-    const float maximum_frequency = fminf(20000.0f, (float)view->sample_rate * 0.5f);
+    float data_maximum_frequency =
+        fminf(20000.0f, (float)view->sample_rate * 0.5f);
+    if (data_maximum_frequency <= 0.0f) data_maximum_frequency = 1.0f;
+    if (!imported_spectrum_interaction.initialized ||
+        imported_spectrum_interaction.analysis_revision !=
+            view->analysis_revision ||
+        fabsf(imported_spectrum_interaction.data_maximum_frequency -
+              data_maximum_frequency) > 0.01f) {
+        imported_spectrum_interaction.viewport =
+            spectrum_viewport_default(data_maximum_frequency);
+        imported_spectrum_interaction.data_maximum_frequency =
+            data_maximum_frequency;
+        imported_spectrum_interaction.analysis_revision =
+            view->analysis_revision;
+        imported_spectrum_interaction.initialized = true;
+        imported_spectrum_interaction.dragging = false;
+    }
+
+    float left_margin = bounds.width < 480.0f ? 54.0f : 64.0f;
+    float bottom_margin = bounds.height < 128.0f ? 28.0f : 34.0f;
+    Rectangle plot = {
+        bounds.x + left_margin,
+        bounds.y + 8.0f,
+        fmaxf(48.0f, bounds.width - left_margin - 12.0f),
+        fmaxf(32.0f, bounds.height - bottom_margin - 8.0f),
+    };
+    SpectrumViewportRect viewport_plot = spectrum_viewport_rect(plot);
+    Rectangle reset_control = {
+        plot.x + plot.width - 92.0f,
+        plot.y + 8.0f,
+        84.0f,
+        28.0f,
+    };
+    float mode_width = 168.0f;
+    Rectangle mode_control = {
+        reset_control.x - mode_width - 8.0f,
+        reset_control.y,
+        mode_width,
+        reset_control.height,
+    };
+    Vector2 mouse = GetMousePosition();
+    bool reset_hovered = CheckCollisionPointRec(mouse, reset_control);
+    bool mode_hovered = CheckCollisionPointRec(mouse, mode_control);
+    bool plot_hovered = CheckCollisionPointRec(mouse, plot) &&
+                        !reset_hovered && !mode_hovered;
+    bool started_dragging = false;
+
+    if (plot_hovered) {
+        float wheel = GetMouseWheelMove();
+        if (wheel != 0.0f) {
+            spectrum_viewport_zoom(&imported_spectrum_interaction.viewport,
+                                   viewport_plot,
+                                   mouse.x,
+                                   mouse.y,
+                                   wheel,
+                                   data_maximum_frequency);
+        }
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            imported_spectrum_interaction.dragging = true;
+            started_dragging = true;
+        }
+    }
+    if (imported_spectrum_interaction.dragging) {
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
+            if (!started_dragging) {
+                Vector2 delta = GetMouseDelta();
+                spectrum_viewport_pan_pixels(
+                    &imported_spectrum_interaction.viewport,
+                    viewport_plot,
+                    delta.x,
+                    delta.y,
+                    data_maximum_frequency);
+            }
+        } else {
+            imported_spectrum_interaction.dragging = false;
+        }
+    }
+
+    if (reset_hovered || mode_hovered) {
+        SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+    } else if (imported_spectrum_interaction.dragging) {
+        SetMouseCursor(MOUSE_CURSOR_RESIZE_ALL);
+    } else if (plot_hovered) {
+        SetMouseCursor(MOUSE_CURSOR_CROSSHAIR);
+    } else {
+        SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+    }
+
+    draw_spectrum_grid(theme,
+                       bounds,
+                       plot,
+                       &imported_spectrum_interaction.viewport);
+
+    BeginScissorMode((int)plot.x,
+                     (int)plot.y,
+                     (int)plot.width,
+                     (int)plot.height);
     Vector2 previous = {0};
     bool has_previous = false;
     for (size_t bin = 0; bin < view->spectrum->count; bin++) {
         float frequency = view->spectrum->frequencies[bin];
-        if (frequency > maximum_frequency) break;
-        float db = 20.0f * log10f(fmaxf(view->spectrum->magnitudes[bin], 0.0000316f));
-        db = fmaxf(minimum_db, fminf(0.0f, db));
+        if (frequency <
+            imported_spectrum_interaction.viewport.minimum_frequency) {
+            continue;
+        }
+        if (frequency >
+            imported_spectrum_interaction.viewport.maximum_frequency) {
+            break;
+        }
+        float db =
+            20.0f *
+            log10f(fmaxf(view->spectrum->magnitudes[bin], 0.00000001f));
         Vector2 current = {
-            bounds.x + frequency / maximum_frequency * bounds.width,
-            bounds.y + bounds.height - (db - minimum_db) / -minimum_db * bounds.height,
+            spectrum_viewport_x_for_frequency(
+                &imported_spectrum_interaction.viewport,
+                viewport_plot,
+                frequency),
+            spectrum_viewport_y_for_db(
+                &imported_spectrum_interaction.viewport,
+                viewport_plot,
+                db),
         };
-        if (has_previous) DrawLineV(previous, current, (Color){62, 145, 242, 255});
+        if (has_previous) {
+            DrawLineEx(previous,
+                       current,
+                       1.4f,
+                       (Color){55, 145, 247, 255});
+        }
         previous = current;
         has_previous = true;
     }
 
     for (int peak = 0; peak < view->peak_count; peak++) {
-        if (view->peaks[peak].frequency > maximum_frequency) continue;
-        float db = fmaxf(minimum_db, fminf(0.0f, view->peaks[peak].db));
-        float x = bounds.x + view->peaks[peak].frequency / maximum_frequency * bounds.width;
-        float y = bounds.y + bounds.height - (db - minimum_db) / -minimum_db * bounds.height;
-        DrawCircleSector((Vector2){x, y}, 4.0f, 0.0f, 360.0f, 24, (Color){226, 88, 78, 255});
+        if (view->peaks[peak].frequency <
+                imported_spectrum_interaction.viewport.minimum_frequency ||
+            view->peaks[peak].frequency >
+                imported_spectrum_interaction.viewport.maximum_frequency ||
+            view->peaks[peak].db <
+                imported_spectrum_interaction.viewport.minimum_db ||
+            view->peaks[peak].db >
+                imported_spectrum_interaction.viewport.maximum_db) {
+            continue;
+        }
+        float x = spectrum_viewport_x_for_frequency(
+            &imported_spectrum_interaction.viewport,
+            viewport_plot,
+            view->peaks[peak].frequency);
+        float y = spectrum_viewport_y_for_db(
+            &imported_spectrum_interaction.viewport,
+            viewport_plot,
+            view->peaks[peak].db);
+        DrawCircleSector((Vector2){x, y},
+                         4.5f,
+                         0.0f,
+                         360.0f,
+                         32,
+                         (Color){238, 102, 92, 255});
     }
+
+    int hovered_peak = -1;
+    Vector2 hover_anchor = mouse;
+    float hover_frequency = 0.0f;
+    float hover_db = 0.0f;
+    if (plot_hovered && !imported_spectrum_interaction.dragging) {
+        hovered_peak = spectrum_viewport_nearest_peak(
+            &imported_spectrum_interaction.viewport,
+            viewport_plot,
+            view->peaks,
+            view->peak_count,
+            mouse.x,
+            mouse.y,
+            15.0f);
+        if (hovered_peak >= 0) {
+            hover_frequency = view->peaks[hovered_peak].frequency;
+            hover_db = view->peaks[hovered_peak].db;
+            hover_anchor.x = spectrum_viewport_x_for_frequency(
+                &imported_spectrum_interaction.viewport,
+                viewport_plot,
+                hover_frequency);
+            hover_anchor.y = spectrum_viewport_y_for_db(
+                &imported_spectrum_interaction.viewport,
+                viewport_plot,
+                hover_db);
+        } else {
+            hover_frequency = spectrum_viewport_frequency_at_x(
+                &imported_spectrum_interaction.viewport,
+                viewport_plot,
+                mouse.x);
+            hover_db = spectrum_viewport_db_at_y(
+                &imported_spectrum_interaction.viewport,
+                viewport_plot,
+                mouse.y);
+        }
+        Color guide_color = hovered_peak >= 0
+                                ? (Color){238, 102, 92, 135}
+                                : (Color){124, 132, 148, 90};
+        DrawLineEx((Vector2){hover_anchor.x, plot.y},
+                   (Vector2){hover_anchor.x, plot.y + plot.height},
+                   1.0f,
+                   guide_color);
+        DrawLineEx((Vector2){plot.x, hover_anchor.y},
+                   (Vector2){plot.x + plot.width, hover_anchor.y},
+                   1.0f,
+                   guide_color);
+        if (hovered_peak >= 0) {
+            DrawCircleSector(hover_anchor,
+                             7.0f,
+                             0.0f,
+                             360.0f,
+                             40,
+                             (Color){238, 102, 92, 255});
+            DrawCircleSector(hover_anchor,
+                             3.0f,
+                             0.0f,
+                             360.0f,
+                             32,
+                             (Color){255, 241, 238, 255});
+        }
+    }
+    EndScissorMode();
+    DrawRectangleLinesEx(plot, 1.0f, (Color){76, 79, 87, 230});
+
+    if (plot_hovered && !imported_spectrum_interaction.dragging) {
+        draw_spectrum_hover_tooltip(theme,
+                                    bounds,
+                                    hover_anchor,
+                                    hovered_peak,
+                                    hover_frequency,
+                                    hover_db);
+    }
+    if (draw_spectrum_reset_control(theme, reset_control)) {
+        imported_spectrum_interaction.viewport =
+            spectrum_viewport_default(data_maximum_frequency);
+        imported_spectrum_interaction.dragging = false;
+    }
+    return draw_spectrum_peak_readout_control(
+        theme, mode_control, selected_mode);
 }
 
 AudioAnalysisActions draw_analysis_page(const AppTheme *theme,
@@ -612,6 +1152,9 @@ AudioAnalysisActions draw_analysis_page(const AppTheme *theme,
     AudioAnalysisActions actions = {
         .region_start_seconds = view != NULL ? view->region_start_seconds : 0.0f,
         .region_duration_seconds = view != NULL ? view->region_duration_seconds : 0.0f,
+        .peak_readout_mode =
+            view != NULL ? view->peak_readout_mode
+                         : PEAK_READOUT_INTERPOLATED,
     };
     float column_gap = UI_SPACE_2;
     float proposed_left_width =
@@ -755,7 +1298,7 @@ AudioAnalysisActions draw_analysis_page(const AppTheme *theme,
     float right_x = workspace.x + left_width + column_gap;
     float right_width = workspace.width - left_width - column_gap;
     float waveform_height =
-        fmaxf(272.0f, roundf((workspace.height * 0.44f) / UI_SPACE_1) * UI_SPACE_1);
+        fmaxf(240.0f, roundf((workspace.height * 0.38f) / UI_SPACE_1) * UI_SPACE_1);
     Rectangle waveform = {right_x, workspace.y, right_width, waveform_height};
     shell_draw_card(theme, waveform, "Waveform", "Decoded mono samples and selected analysis region");
     Rectangle waveform_plot = {
@@ -777,15 +1320,27 @@ AudioAnalysisActions draw_analysis_page(const AppTheme *theme,
 
     Rectangle spectrum = {right_x, waveform.y + waveform.height + column_gap, right_width,
                           workspace.height - waveform.height - column_gap};
-    shell_draw_card(theme, spectrum, "Magnitude spectrum", "Hann window  |  FFT  |  peak detection  |  20 Hz - 20 kHz");
-    float readout_height = 176.0f;
+    shell_draw_card(theme,
+                    spectrum,
+                    "Magnitude spectrum",
+                    "Scroll to zoom  |  Drag to pan  |  Hover peaks for details");
+    float readout_height = 128.0f;
     Rectangle spectrum_plot = {
         spectrum.x + UI_SPACE_2,
         spectrum.y + CARD_BODY_OFFSET,
         spectrum.width - UI_SPACE_4,
         fmaxf(40.0f, spectrum.height - CARD_BODY_OFFSET - readout_height),
     };
-    draw_imported_spectrum(theme, spectrum_plot, view);
+    PeakReadoutMode selected_peak_readout_mode =
+        actions.peak_readout_mode;
+    if (draw_imported_spectrum(theme,
+                               spectrum_plot,
+                               view,
+                               &selected_peak_readout_mode)) {
+        actions.select_peak_readout_mode = true;
+        actions.peak_readout_mode =
+            selected_peak_readout_mode;
+    }
 
     float readout_y = spectrum.y + spectrum.height - readout_height + UI_SPACE_2;
     float readout_x = spectrum.x + UI_SPACE_2;
@@ -797,7 +1352,7 @@ AudioAnalysisActions draw_analysis_page(const AppTheme *theme,
                              TextFormat("%d. %.1f Hz  %.1f dB",
                                         peak + 1, view->peaks[peak].frequency, view->peaks[peak].db),
                              readout_x,
-                             readout_y + 40.0f + (float)peak * 32.0f,
+                             readout_y + 32.0f + (float)peak * 24.0f,
                              spectrum.width * 0.50f - UI_SPACE_4,
                              12.0f,
                              10.0f,
@@ -815,7 +1370,7 @@ AudioAnalysisActions draw_analysis_page(const AppTheme *theme,
         draw_fitted_text(theme,
                          TextFormat("%.2f Hz", view->pitch->frequency_hz),
                          pitch_x,
-                         readout_y + 40.0f,
+                         readout_y + 32.0f,
                          pitch_width,
                          20.0f,
                          14.0f,
@@ -828,14 +1383,14 @@ AudioAnalysisActions draw_analysis_page(const AppTheme *theme,
                                     view->pitch->cents,
                                     (int)(view->pitch->confidence * 100.0f + 0.5f)),
                          pitch_x,
-                         readout_y + 88.0f,
+                         readout_y + 72.0f,
                          pitch_width,
                          12.0f,
                          9.5f,
                          theme->muted_text,
                          false);
     } else {
-        theme_draw_heading(theme, "No stable pitch", pitch_x, readout_y + 40.0f, 17.0f, theme->muted_text);
+        theme_draw_heading(theme, "No stable pitch", pitch_x, readout_y + 32.0f, 17.0f, theme->muted_text);
     }
     return actions;
 }

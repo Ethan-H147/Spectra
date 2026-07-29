@@ -126,7 +126,9 @@ typedef struct {
     AudioClip region_clip;
     Spectrum spectrum;
     Peak peaks[ANALYSIS_MAX_PEAKS];
+    Peak interpolated_peaks[ANALYSIS_MAX_PEAKS];
     int peak_count;
+    int interpolated_peak_count;
     PitchEstimate pitch;
     ExtractedHarmonic harmonics[EXTRACTED_HARMONIC_COUNT];
     int harmonic_count;
@@ -183,6 +185,7 @@ typedef struct {
     float region_start_seconds;
     float region_duration_seconds;
     bool analyzed;
+    unsigned int analysis_revision;
     char path[IMPORT_PATH_CAPACITY];
     char file_name[IMPORT_TEXT_CAPACITY];
     char status[IMPORT_TEXT_CAPACITY];
@@ -1822,6 +1825,7 @@ static bool analyze_imported_region(ImportedAnalysisState *state, bool audio_rea
     spectrum_free(&state->spectrum);
     imported_reconstructions_unload(state);
     state->peak_count = 0;
+    state->interpolated_peak_count = 0;
     state->pitch = (PitchEstimate){0};
     state->analyzed = false;
 
@@ -1840,6 +1844,13 @@ static bool analyze_imported_region(ImportedAnalysisState *state, bool audio_rea
     const float max_frequency = fminf(20000.0f, (float)region.sample_rate * 0.5f);
     state->peak_count =
         find_peaks(&state->spectrum, 20.0f, max_frequency, -55.0f, state->peaks, ANALYSIS_MAX_PEAKS);
+    state->interpolated_peak_count =
+        find_interpolated_peaks(&state->spectrum,
+                                20.0f,
+                                max_frequency,
+                                -55.0f,
+                                state->interpolated_peaks,
+                                ANALYSIS_MAX_PEAKS);
     state->pitch = estimate_pitch(&region, 50.0f, fminf(2000.0f, max_frequency));
 
     state->analyzed_region_start_seconds = state->region_start_seconds;
@@ -1912,6 +1923,10 @@ static bool analyze_imported_region(ImportedAnalysisState *state, bool audio_rea
         snprintf(state->lab_status, sizeof(state->lab_status), "Reconstruction could not be created for this region.");
     }
     state->analyzed = true;
+    state->analysis_revision++;
+    if (state->analysis_revision == 0U) {
+        state->analysis_revision = 1U;
+    }
     return true;
 }
 
@@ -2205,6 +2220,8 @@ int main(void) {
     audio_clip_init(&clip);
     ImportedAnalysisState imported;
     imported_analysis_init(&imported);
+    PeakReadoutMode analysis_peak_readout_mode =
+        PEAK_READOUT_INTERPOLATED;
     AudioAnalysisActions pending_analysis_actions = {0};
     HarmonicLabActions pending_lab_actions = {0};
     SpectrogramActions pending_spectrogram_actions = {0};
@@ -2254,6 +2271,14 @@ int main(void) {
         }
         pending_settings_actions = (SettingsActions){0};
 
+        if (pending_analysis_actions.select_peak_readout_mode &&
+            (pending_analysis_actions.peak_readout_mode ==
+                 PEAK_READOUT_INTERPOLATED ||
+             pending_analysis_actions.peak_readout_mode ==
+                 PEAK_READOUT_FFT_BINS)) {
+            analysis_peak_readout_mode =
+                pending_analysis_actions.peak_readout_mode;
+        }
         if (pending_analysis_actions.choose_file) {
             char selected_path[IMPORT_PATH_CAPACITY] = {0};
             if (windows_app_choose_audio_file(GetWindowHandle(), selected_path, sizeof(selected_path))) {
@@ -2798,6 +2823,9 @@ int main(void) {
                 analysis_playback == PLAYBACK_ANALYSIS_REGION
                     ? "Analyzed region"
                     : "Original full file";
+            bool use_interpolated_peaks =
+                analysis_peak_readout_mode ==
+                PEAK_READOUT_INTERPOLATED;
             AudioAnalysisView analysis_view = {
                 .loaded = imported.audio.mono.samples != NULL,
                 .analyzed = imported.analyzed,
@@ -2819,9 +2847,16 @@ int main(void) {
                 .waveform_maximums = imported.waveform_maximums,
                 .waveform_bin_count = imported.waveform_bin_count,
                 .spectrum = &imported.spectrum,
-                .peaks = imported.peaks,
-                .peak_count = imported.peak_count,
+                .peaks = use_interpolated_peaks
+                             ? imported.interpolated_peaks
+                             : imported.peaks,
+                .peak_count = use_interpolated_peaks
+                                  ? imported.interpolated_peak_count
+                                  : imported.peak_count,
                 .pitch = &imported.pitch,
+                .analysis_revision = imported.analysis_revision,
+                .peak_readout_mode =
+                    analysis_peak_readout_mode,
             };
             pending_analysis_actions = draw_analysis_page(&theme, shell_frame.workspace, &analysis_view);
             if (analysis_view.loaded) {

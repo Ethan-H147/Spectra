@@ -66,10 +66,21 @@ static int test_peak_detection(void) {
 static int test_spectrum_for_a4(void) {
     SampleBuffer sine = generate_sine_wave(440.0f, 1.0f, 1.0f, 44100);
     Spectrum spectrum = compute_magnitude_spectrum(sine.samples, sine.count, sine.sample_rate);
-    Peak peaks[4] = {0};
-    int count = find_peaks(&spectrum, 50.0f, 1000.0f, -60.0f, peaks, 4);
-    ASSERT_TRUE(count >= 1, "440 Hz sine should produce a spectrum peak");
-    ASSERT_TRUE(fabsf(peaks[0].frequency - 440.0f) < 4.0f, "strongest A4 peak should be near 440 Hz");
+    Peak bin_peaks[4] = {0};
+    Peak precise_peaks[4] = {0};
+    int bin_count =
+        find_peaks(&spectrum, 50.0f, 1000.0f, -60.0f, bin_peaks, 4);
+    int precise_count = find_interpolated_peaks(
+        &spectrum, 50.0f, 1000.0f, -60.0f, precise_peaks, 4);
+    ASSERT_TRUE(bin_count >= 1 && precise_count == bin_count,
+                "440 Hz sine should produce matching raw and precise peaks");
+    ASSERT_TRUE(fabsf(bin_peaks[0].frequency - 440.0f) < 4.0f,
+                "strongest A4 FFT bin should be near 440 Hz");
+    ASSERT_TRUE(fabsf(precise_peaks[0].frequency - 440.0f) < 0.15f,
+                "interpolated A4 peak should closely estimate 440 Hz");
+    ASSERT_TRUE(fabsf(precise_peaks[0].frequency - 440.0f) <
+                    fabsf(bin_peaks[0].frequency - 440.0f),
+                "interpolation should improve on the raw FFT-bin center");
     spectrum_free(&spectrum);
     sample_buffer_free(&sine);
     return 0;

@@ -27,6 +27,7 @@ set(OLD_GLOB
   "C:/Users/huyus/Projects/C-Spectra/src/ui/app_shell.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/help_center.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/spectrogram_layout.c"
+  "C:/Users/huyus/Projects/C-Spectra/src/ui/spectrum_viewport.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/theme.c"
   "C:/Users/huyus/Projects/C-Spectra/src/ui/widgets.c"
   )

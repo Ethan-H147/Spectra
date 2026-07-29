@@ -70,6 +70,9 @@
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\spectrogram_layout.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\spectrum_viewport.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\theme.c">
       <Filter>Source Files</Filter>
     </ClCompile>

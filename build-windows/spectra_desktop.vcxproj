@@ -452,6 +452,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\app_shell.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\help_center.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\spectrogram_layout.c" />
+    <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\spectrum_viewport.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\theme.c" />
     <ClCompile Include="C:\Users\huyus\Projects\C-Spectra\src\ui\widgets.c" />
     <ResourceCompile Include="C:\Users\huyus\Projects\C-Spectra\build-windows\spectra.rc" />
