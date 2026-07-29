@@ -72,26 +72,6 @@ static void app_draw_text(const char *text, int x, int y, int font_size, Color c
 
 static const ADSREnvelope DEFAULT_ENVELOPE = {0.015f, 0.08f, 0.75f, 0.12f};
 
-static void set_spectra_window_icon(void) {
-    const int icon_size = 256;
-    const int point_count = 65;
-    Image icon = GenImageColor(icon_size, icon_size, (Color){250, 250, 250, 255});
-    Vector2 previous = {28.0f, 128.0f};
-
-    for (int i = 1; i < point_count; i++) {
-        float t = (float)i / (float)(point_count - 1);
-        Vector2 current = {
-            28.0f + t * 200.0f,
-            128.0f + sinf(t * 4.0f * PI) * 56.0f,
-        };
-        ImageDrawLineEx(&icon, previous, current, 18, BLACK);
-        previous = current;
-    }
-
-    SetWindowIcon(icon);
-    UnloadImage(icon);
-}
-
 typedef enum {
     PRESET_SINE = 0,
     PRESET_SQUARE,
@@ -2183,7 +2163,6 @@ int main(void) {
     windows_app_prepare_process();
     SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Spectra - Fourier Additive Synth Desktop");
-    set_spectra_window_icon();
     windows_app_apply_window_icon(GetWindowHandle());
     SetExitKey(KEY_NULL);
     SetWindowMinSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);

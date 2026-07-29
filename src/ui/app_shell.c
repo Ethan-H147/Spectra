@@ -126,19 +126,59 @@ static void draw_icon(ShellIcon icon, Vector2 center, Color color) {
     }
 }
 
-static void draw_brand_mark(Rectangle bounds) {
-    DrawRectangleRounded(bounds, 0.22f, 8, (Color){250, 250, 250, 255});
+static Vector2 brand_mark_point(Rectangle bounds, Vector2 point) {
+    return (Vector2){
+        bounds.x + bounds.width * point.x / 256.0f,
+        bounds.y + bounds.height * point.y / 256.0f,
+    };
+}
 
-    Vector2 previous = {bounds.x + bounds.width * 0.14f, bounds.y + bounds.height * 0.50f};
-    for (int i = 1; i <= 32; i++) {
-        float t = (float)i / 32.0f;
-        Vector2 current = {
-            bounds.x + bounds.width * (0.14f + t * 0.72f),
-            bounds.y + bounds.height * (0.50f + sinf(t * 4.0f * PI) * 0.25f),
-        };
-        DrawLineEx(previous, current, fmaxf(2.5f, bounds.width * 0.075f), BLACK);
-        previous = current;
+static Vector2 cubic_bezier_point(Vector2 start, Vector2 control_a, Vector2 control_b, Vector2 end, float t) {
+    float inverse_t = 1.0f - t;
+    float start_weight = inverse_t * inverse_t * inverse_t;
+    float control_a_weight = 3.0f * inverse_t * inverse_t * t;
+    float control_b_weight = 3.0f * inverse_t * t * t;
+    float end_weight = t * t * t;
+    return (Vector2){
+        start.x * start_weight + control_a.x * control_a_weight +
+            control_b.x * control_b_weight + end.x * end_weight,
+        start.y * start_weight + control_a.y * control_a_weight +
+            control_b.y * control_b_weight + end.y * end_weight,
+    };
+}
+
+static void draw_brand_mark(Rectangle bounds) {
+    static const Vector2 curve_segments[5][4] = {
+        {{28.0f, 128.0f}, {45.0f, 128.0f}, {47.0f, 72.0f}, {64.0f, 72.0f}},
+        {{64.0f, 72.0f}, {81.0f, 72.0f}, {83.0f, 184.0f}, {100.0f, 184.0f}},
+        {{100.0f, 184.0f}, {117.0f, 184.0f}, {119.0f, 72.0f}, {136.0f, 72.0f}},
+        {{136.0f, 72.0f}, {153.0f, 72.0f}, {155.0f, 184.0f}, {172.0f, 184.0f}},
+        {{172.0f, 184.0f}, {189.0f, 184.0f}, {191.0f, 128.0f}, {228.0f, 128.0f}},
+    };
+    Rectangle tile = {
+        bounds.x + bounds.width * (8.0f / 256.0f),
+        bounds.y + bounds.height * (8.0f / 256.0f),
+        bounds.width * (240.0f / 256.0f),
+        bounds.height * (240.0f / 256.0f),
+    };
+    DrawRectangleRounded(tile, 52.0f / 120.0f, 12, (Color){250, 250, 250, 255});
+
+    float stroke_width = bounds.width * (18.0f / 256.0f);
+    Vector2 previous = brand_mark_point(bounds, curve_segments[0][0]);
+    DrawCircleV(previous, stroke_width * 0.5f, BLACK);
+    for (int segment = 0; segment < 5; segment++) {
+        Vector2 start = brand_mark_point(bounds, curve_segments[segment][0]);
+        Vector2 control_a = brand_mark_point(bounds, curve_segments[segment][1]);
+        Vector2 control_b = brand_mark_point(bounds, curve_segments[segment][2]);
+        Vector2 end = brand_mark_point(bounds, curve_segments[segment][3]);
+        for (int step = 1; step <= 12; step++) {
+            float t = (float)step / 12.0f;
+            Vector2 current = cubic_bezier_point(start, control_a, control_b, end, t);
+            DrawLineEx(previous, current, stroke_width, BLACK);
+            previous = current;
+        }
     }
+    DrawCircleV(previous, stroke_width * 0.5f, BLACK);
 }
 
 static bool draw_nav_item(const AppTheme *theme, Rectangle bounds, const NavItem *item, bool active) {
