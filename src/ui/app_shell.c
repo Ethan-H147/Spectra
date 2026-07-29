@@ -68,7 +68,7 @@ static const char *page_title(AppPage page) {
 
 static const char *page_context(AppPage page) {
     switch (page) {
-        case APP_PAGE_OVERVIEW: return "Project / Start";
+        case APP_PAGE_OVERVIEW: return "Session / Status";
         case APP_PAGE_SYNTH: return "Generate / Additive synthesis";
         case APP_PAGE_ANALYSIS: return "Analyze / Imported audio";
         case APP_PAGE_HARMONIC_LAB: return "Transform / Resynthesis";
@@ -401,126 +401,634 @@ AppShellFrame draw_app_shell(const AppTheme *theme,
     return frame;
 }
 
-static void draw_step(const AppTheme *theme, Rectangle bounds, const char *number, const char *title,
-                      const char *description, bool ready) {
-    DrawRectangleRounded(bounds, 0.035f, 8, theme->panel);
-    DrawRectangleRoundedLines(bounds, 0.035f, 8, theme->panel_border);
-    bool compact = bounds.width < 260.0f;
-    float number_x = bounds.x + (compact ? 23.0f : 28.0f);
-    float number_y = bounds.y + 30.0f;
-    float number_radius = compact ? 15.0f : 17.0f;
-    DrawCircleSector((Vector2){number_x, number_y},
-                     number_radius,
-                     0.0f,
-                     360.0f,
-                     64,
-                     ready ? theme->accent : (Color){70, 70, 74, 255});
-    int number_width = theme_measure_heading(theme, number, 12.0f);
-    float number_text_y = number_y - theme_scaled_size(theme, 12.0f) * 0.5f - 1.0f;
-    theme_draw_heading(theme, number, number_x - (float)number_width * 0.5f, number_text_y, 12.0f, WHITE);
-    float title_x = number_x + number_radius + 9.0f;
-    float title_y = number_y - theme_scaled_size(theme, 13.0f) * 0.5f - 1.0f;
-    theme_draw_heading(theme, title, title_x, title_y, 13.0f, theme->text);
-    float description_height = theme_scaled_size(theme, 11.5f);
-    float description_y =
-        bounds.y + bounds.height - UI_SPACE_2 - description_height;
+static void draw_dashboard_metric(const AppTheme *theme,
+                                  Rectangle bounds,
+                                  const char *label,
+                                  const char *value,
+                                  const char *detail,
+                                  Color state_color) {
+    float label_y = bounds.y + 12.0f;
+    float value_y =
+        label_y + ceilf(theme_scaled_size(theme, 12.0f) / 4.0f) * 4.0f + 8.0f;
+    float detail_y =
+        value_y + ceilf(theme_scaled_size(theme, 20.0f) / 4.0f) * 4.0f + 8.0f;
+    DrawRectangleRounded(bounds, 0.06f, 8, theme->panel);
+    DrawRectangleRoundedLines(bounds, 0.06f, 8, theme->panel_border);
+    DrawCircleV((Vector2){bounds.x + 16.0f, bounds.y + 20.0f}, 4.0f, state_color);
+    theme_draw_heading(theme, label, bounds.x + 28.0f, label_y, 12.0f, theme->muted_text);
     draw_fitted_text(theme,
-                     description,
-                     bounds.x + UI_SPACE_2,
-                     description_y,
-                     bounds.width - UI_SPACE_4,
-                     11.5f,
-                     9.5f,
+                     value,
+                     bounds.x + 16.0f,
+                     value_y,
+                     bounds.width - 32.0f,
+                     20.0f,
+                     14.0f,
+                     theme->text,
+                     true);
+    draw_fitted_text(theme,
+                     detail,
+                     bounds.x + 16.0f,
+                     detail_y,
+                     bounds.width - 32.0f,
+                     12.0f,
+                     10.0f,
                      theme->muted_text,
                      false);
-    if (!compact) {
-        if (ready) shell_draw_badge(theme, (Rectangle){bounds.x + bounds.width - 92.0f, bounds.y + 14.0f, 74.0f, 23.0f},
-                                    "READY", (Color){70, 190, 120, 255});
-        else shell_draw_badge(theme, (Rectangle){bounds.x + bounds.width - 104.0f, bounds.y + 14.0f, 86.0f, 23.0f},
-                              "PLANNED", (Color){229, 160, 62, 255});
-    }
 }
 
-AppPage draw_overview_page(const AppTheme *theme, Rectangle workspace) {
-    AppPage requested_page = APP_PAGE_COUNT;
-    theme_draw_heading(theme, "Build sound. See its structure.", workspace.x, workspace.y, 30.0f, theme->text);
-    float subtitle_y = workspace.y + theme_scaled_size(theme, 30.0f) + 5.0f;
-    theme_draw_text(theme, "A focused Fourier workspace for synthesis, analysis, and additive reconstruction.",
-                    workspace.x, subtitle_y, 16.0f, theme->muted_text);
+static void draw_dashboard_panel(const AppTheme *theme,
+                                 Rectangle bounds,
+                                 const char *title,
+                                 const char *subtitle) {
+    float title_y = bounds.y + 16.0f;
+    float subtitle_y =
+        title_y + ceilf(theme_scaled_size(theme, 16.0f) / 4.0f) * 4.0f + 8.0f;
+    DrawRectangleRounded(bounds, 0.025f, 8, theme->panel);
+    DrawRectangleRoundedLines(bounds, 0.025f, 8, theme->panel_border);
+    draw_fitted_text(theme,
+                     title,
+                     bounds.x + 16.0f,
+                     title_y,
+                     bounds.width - 32.0f,
+                     16.0f,
+                     12.0f,
+                     theme->text,
+                     true);
+    draw_fitted_text(theme,
+                     subtitle,
+                     bounds.x + 16.0f,
+                     subtitle_y,
+                     bounds.width - 32.0f,
+                     12.0f,
+                     10.0f,
+                     theme->muted_text,
+                     false);
+}
 
-    float card_height = fminf(160.0f, fmaxf(140.0f, workspace.height * 0.19f));
-    float card_width = (workspace.width - 32.0f) / 3.0f;
-    float card_y = subtitle_y + theme_scaled_size(theme, 16.0f) + 16.0f;
-    Rectangle synth_card = {workspace.x, card_y, card_width, card_height};
-    Rectangle analyze_card = {synth_card.x + card_width + 16.0f, synth_card.y, card_width, card_height};
-    Rectangle reconstruct_card = {analyze_card.x + card_width + 16.0f, synth_card.y, card_width, card_height};
-    bool compact_cards = card_width < 460.0f;
-    shell_draw_card(theme, synth_card, "Create a harmonic tone",
-                    compact_cards ? "16 partials, ADSR, playback" : "16 partials, ADSR, playback, spectrum");
-    float action_y = synth_card.y + synth_card.height - 48.0f;
-    if (draw_button(theme, (Rectangle){synth_card.x + 18, action_y, 148, 36}, "Open Synth", theme->accent)) {
-        requested_page = APP_PAGE_SYNTH;
-    }
-    shell_draw_badge(theme, (Rectangle){synth_card.x + synth_card.width - 126.0f, action_y + 4.0f, 108, 28},
-                     "AVAILABLE", (Color){70, 190, 120, 255});
+static bool draw_dashboard_status_row(const AppTheme *theme,
+                                      Rectangle bounds,
+                                      const char *label,
+                                      const char *value,
+                                      Color state_color) {
+    Vector2 mouse = GetMousePosition();
+    bool hovered = CheckCollisionPointRec(mouse, bounds);
+    bool pressed = hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+    bool held = hovered && IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+    Rectangle visual_bounds = bounds;
+    if (held) visual_bounds.y += 1.0f;
+    DrawRectangleRounded(visual_bounds,
+                         0.10f,
+                         8,
+                         hovered ? (Color){43, 45, 50, 255}
+                                 : (Color){31, 32, 36, 255});
+    DrawRectangleRoundedLines(visual_bounds,
+                              0.10f,
+                              8,
+                              hovered ? (Color){72, 78, 88, 255}
+                                      : (Color){49, 51, 57, 255});
+    DrawCircleV((Vector2){visual_bounds.x + 16.0f,
+                          visual_bounds.y + visual_bounds.height * 0.5f},
+                4.0f,
+                state_color);
+    theme_draw_heading(theme,
+                       label,
+                       visual_bounds.x + 28.0f,
+                       visual_bounds.y +
+                           (visual_bounds.height - theme_scaled_size(theme, 12.0f)) * 0.5f -
+                           1.0f,
+                       12.0f,
+                       theme->text);
+    float value_x =
+        visual_bounds.x +
+        floorf((visual_bounds.width * 0.42f) / 4.0f) * 4.0f;
+    draw_fitted_text(theme,
+                     value,
+                     value_x,
+                     visual_bounds.y +
+                         (visual_bounds.height - theme_scaled_size(theme, 11.5f)) * 0.5f -
+                         1.0f,
+                     visual_bounds.x + visual_bounds.width - value_x - 32.0f,
+                     12.0f,
+                     9.0f,
+                     theme->muted_text,
+                     false);
+    float arrow_x = visual_bounds.x + visual_bounds.width - 16.0f;
+    float arrow_y = visual_bounds.y + visual_bounds.height * 0.5f;
+    DrawTriangle((Vector2){arrow_x, arrow_y},
+                 (Vector2){arrow_x - 8.0f, arrow_y - 4.0f},
+                 (Vector2){arrow_x - 8.0f, arrow_y + 4.0f},
+                 hovered ? theme->accent : theme->muted_text);
+    return pressed;
+}
 
-    shell_draw_card(theme, analyze_card, compact_cards ? "Analyze audio" : "Import and analyze audio",
-                    compact_cards ? "Waveform, FFT, pitch" : "Decode, waveform, FFT, estimated pitch");
-    if (draw_button(theme, (Rectangle){analyze_card.x + 18, action_y, 148, 36}, "Open Analysis", theme->accent)) {
-        requested_page = APP_PAGE_ANALYSIS;
-    }
+static bool draw_dashboard_workspace(const AppTheme *theme,
+                                     Rectangle bounds,
+                                     const char *title,
+                                     const char *value,
+                                     const char *detail,
+                                     const char *state,
+                                     Color state_color) {
+    Vector2 mouse = GetMousePosition();
+    bool hovered = CheckCollisionPointRec(mouse, bounds);
+    bool pressed = hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+    bool held = hovered && IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+    Rectangle visual_bounds = bounds;
+    if (held) visual_bounds.y += 1.0f;
+    DrawRectangleRounded(visual_bounds,
+                         0.05f,
+                         8,
+                         hovered ? (Color){37, 39, 44, 255} : theme->panel);
+    DrawRectangleRoundedLines(visual_bounds,
+                              0.05f,
+                              8,
+                              hovered ? (Color){78, 84, 94, 255}
+                                      : theme->panel_border);
+    draw_fitted_text(theme,
+                     title,
+                     visual_bounds.x + 16.0f,
+                     visual_bounds.y + 16.0f,
+                     visual_bounds.width - 108.0f,
+                     16.0f,
+                     12.0f,
+                     theme->text,
+                     true);
     shell_draw_badge(theme,
-                     (Rectangle){analyze_card.x + analyze_card.width - 88.0f, action_y + 4.0f, 70, 28},
-                     "READY",
-                     (Color){70, 190, 120, 255});
-    shell_draw_card(theme, reconstruct_card, compact_cards ? "Reconstruct audio" : "Reconstruct a sound",
-                    compact_cards ? "Extract and compare harmonics" : "Extract harmonics and compare playback");
-    if (draw_button(theme,
-                    (Rectangle){reconstruct_card.x + 18, action_y, 148, 36},
-                    "Open Lab",
-                    theme->accent)) {
-        requested_page = APP_PAGE_HARMONIC_LAB;
-    }
-    shell_draw_badge(theme,
-                     (Rectangle){reconstruct_card.x + reconstruct_card.width - 88.0f, action_y + 4.0f, 70, 28},
-                     "READY",
-                     (Color){70, 190, 120, 255});
+                     (Rectangle){visual_bounds.x + visual_bounds.width - 82.0f,
+                                 visual_bounds.y + 12.0f,
+                                 68.0f,
+                                 24.0f},
+                     state,
+                     state_color);
+    float value_y =
+        visual_bounds.y + 16.0f +
+        ceilf(theme_scaled_size(theme, 16.0f) / 4.0f) * 4.0f + 8.0f;
+    float detail_y =
+        value_y + ceilf(theme_scaled_size(theme, 20.0f) / 4.0f) * 4.0f + 8.0f;
+    draw_fitted_text(theme,
+                     value,
+                     visual_bounds.x + 16.0f,
+                     value_y,
+                     visual_bounds.width - 32.0f,
+                     20.0f,
+                     14.0f,
+                     theme->text,
+                     true);
+    draw_fitted_text(theme,
+                     detail,
+                     visual_bounds.x + 16.0f,
+                     detail_y,
+                     visual_bounds.width - 32.0f,
+                     12.0f,
+                     10.0f,
+                     theme->muted_text,
+                     false);
+    const char *open_label = "Open workspace";
+    float footer_y = visual_bounds.y + visual_bounds.height - 28.0f;
+    theme_draw_heading(theme,
+                       open_label,
+                       visual_bounds.x + 16.0f,
+                       footer_y,
+                       12.0f,
+                       hovered ? theme->accent : theme->muted_text);
+    int open_width = theme_measure_heading(theme, open_label, 12.0f);
+    theme_draw_heading(theme,
+                       ">",
+                       visual_bounds.x + 24.0f + (float)open_width,
+                       footer_y,
+                       12.0f,
+                       hovered ? theme->accent : theme->muted_text);
+    return pressed;
+}
 
-    float signal_title_y = synth_card.y + synth_card.height + 24.0f;
-    float step_y = signal_title_y + theme_scaled_size(theme, 19.0f) + 12.0f;
-    float step_height = fminf(104.0f, fmaxf(96.0f, workspace.height * 0.12f));
-    theme_draw_heading(theme, "Signal path", workspace.x, signal_title_y, 19.0f, theme->text);
-    const char *titles[] = {"Source", "Synthesis", "Spectrum", "Pitch", "Harmonics", "Resynthesis"};
-    const char *details[] = {"Generated tone", "ADSR + gain", "FFT + peaks", "Estimated f0", "Peak matching", "Additive model"};
-    float step_width = (workspace.width - 50.0f) / 6.0f;
-    for (int i = 0; i < 6; i++) {
-        Rectangle step = {workspace.x + (step_width + 10.0f) * (float)i, step_y, step_width, step_height};
-        draw_step(theme, step, TextFormat("%d", i + 1), titles[i], details[i], true);
-        if (i < 5) {
-            float arrow_y = step.y + step.height * 0.5f;
-            DrawTriangle((Vector2){step.x + step.width + 8.0f, arrow_y},
-                         (Vector2){step.x + step.width + 2.0f, arrow_y - 4.0f},
-                         (Vector2){step.x + step.width + 2.0f, arrow_y + 4.0f}, theme->muted_text);
+OverviewActions draw_overview_page(const AppTheme *theme,
+                                   Rectangle workspace,
+                                   const OverviewView *view) {
+    const Color ready_color = {70, 190, 120, 255};
+    const Color waiting_color = {229, 160, 62, 255};
+    const Color idle_color = {115, 118, 126, 255};
+    OverviewActions actions = {.page = APP_PAGE_COUNT};
+    bool source_loaded = view != NULL && view->source_loaded;
+    bool analyzed = source_loaded && view->analyzed;
+
+    const float page_title_size = 24.0f;
+    const float page_detail_size = 12.0f;
+    float session_detail_y =
+        workspace.y +
+        ceilf(theme_scaled_size(theme, page_title_size) / 4.0f) * 4.0f +
+        8.0f;
+    theme_draw_heading(
+        theme, "Current session", workspace.x, workspace.y, page_title_size, theme->text);
+    const char *session_detail =
+        source_loaded && view->file_name != NULL ? view->file_name : "No audio imported";
+    draw_fitted_text(theme,
+                     session_detail,
+                     workspace.x,
+                     session_detail_y,
+                     workspace.width - 192.0f,
+                     page_detail_size,
+                     10.0f,
+                     theme->muted_text,
+                     false);
+    actions.choose_file =
+        draw_button(theme,
+                    (Rectangle){workspace.x + workspace.width - 168.0f,
+                                workspace.y,
+                                168.0f,
+                                40.0f},
+                    source_loaded ? "Replace audio" : "Import audio",
+                    theme->accent);
+
+    char synth_value[40];
+    char synth_detail[64];
+    snprintf(synth_value,
+             sizeof(synth_value),
+             "%.1f Hz",
+             view != NULL ? view->synth_frequency_hz : 0.0f);
+    snprintf(synth_detail,
+             sizeof(synth_detail),
+             "%d partials | %.2f s",
+             view != NULL ? view->synth_partial_count : 0,
+             view != NULL ? view->synth_duration_seconds : 0.0f);
+
+    char source_value[40] = "No source";
+    char source_detail[64] = "Import WAV, MP3, OGG, or FLAC";
+    if (source_loaded) {
+        snprintf(source_value,
+                 sizeof(source_value),
+                 "%.2f s",
+                 view->source_duration_seconds);
+        snprintf(source_detail,
+                 sizeof(source_detail),
+                 "%.1f kHz | %s",
+                 (float)view->sample_rate / 1000.0f,
+                 view->source_channels == 1U ? "Mono" : "Stereo");
+    }
+
+    char analysis_value[64] = "Not analyzed";
+    char analysis_detail[64] = "Select a region in Audio Analysis";
+    if (analyzed && view->pitch != NULL && view->pitch->valid) {
+        snprintf(analysis_value,
+                 sizeof(analysis_value),
+                 "%s%d  %.2f Hz",
+                 pitch_note_name(view->pitch->midi_note),
+                 pitch_note_octave(view->pitch->midi_note),
+                 view->pitch->frequency_hz);
+        snprintf(analysis_detail,
+                 sizeof(analysis_detail),
+                 "%d peaks | %.0f%% confidence",
+                 view->peak_count,
+                 view->pitch->confidence * 100.0f);
+    } else if (analyzed) {
+        snprintf(analysis_value, sizeof(analysis_value), "Pitch unavailable");
+        snprintf(analysis_detail, sizeof(analysis_detail), "%d spectral peaks", view->peak_count);
+    }
+
+    float metric_gap = 12.0f;
+    float metric_y =
+        session_detail_y +
+        ceilf(theme_scaled_size(theme, page_detail_size) / 4.0f) * 4.0f +
+        12.0f;
+    float metric_height = 132.0f;
+    float metric_width =
+        floorf(((workspace.width - metric_gap * 3.0f) / 4.0f) / 4.0f) * 4.0f;
+    float final_metric_width =
+        workspace.width - (metric_width + metric_gap) * 3.0f;
+    draw_dashboard_metric(theme,
+                          (Rectangle){workspace.x, metric_y, metric_width, metric_height},
+                          "AUDIO DEVICE",
+                          view != NULL && view->audio_ready ? "Ready" : "Unavailable",
+                          view != NULL && view->audio_ready ? "System output" : "WAV export remains available",
+                          view != NULL && view->audio_ready ? ready_color : waiting_color);
+    draw_dashboard_metric(theme,
+                          (Rectangle){workspace.x + metric_width + metric_gap,
+                                      metric_y,
+                                      metric_width,
+                                      metric_height},
+                          "SYNTH",
+                          synth_value,
+                          synth_detail,
+                          ready_color);
+    draw_dashboard_metric(theme,
+                          (Rectangle){workspace.x + (metric_width + metric_gap) * 2.0f,
+                                      metric_y,
+                                      metric_width,
+                                      metric_height},
+                          "IMPORTED SOURCE",
+                          source_value,
+                          source_detail,
+                          source_loaded ? ready_color : idle_color);
+    draw_dashboard_metric(theme,
+                          (Rectangle){workspace.x + (metric_width + metric_gap) * 3.0f,
+                                      metric_y,
+                                      final_metric_width,
+                                      metric_height},
+                          "REGION ANALYSIS",
+                          analysis_value,
+                          analysis_detail,
+                          analyzed ? ready_color : idle_color);
+
+    float main_gap = 16.0f;
+    float main_y = metric_y + metric_height + 8.0f;
+    float main_height = source_loaded ? 260.0f : 240.0f;
+    float source_width = floorf((workspace.width * 0.55f) / 4.0f) * 4.0f;
+    Rectangle source_card = {workspace.x, main_y, source_width, main_height};
+    Rectangle results_card = {source_card.x + source_card.width + main_gap,
+                              main_y,
+                              workspace.width - source_width - main_gap,
+                              main_height};
+
+    draw_dashboard_panel(
+        theme,
+        source_card,
+        "Imported source",
+        source_loaded && view->file_name != NULL ? view->file_name : "No imported audio");
+    if (source_loaded) {
+        float info_y = source_card.y + 100.0f;
+        char duration_text[32];
+        char rate_text[32];
+        char channel_text[24];
+        char region_text[48];
+        snprintf(duration_text, sizeof(duration_text), "%.2f s", view->source_duration_seconds);
+        snprintf(rate_text, sizeof(rate_text), "%u Hz", view->sample_rate);
+        snprintf(channel_text,
+                 sizeof(channel_text),
+                 "%u (%s)",
+                 view->source_channels,
+                 view->source_channels == 1U ? "mono" : "stereo");
+        snprintf(region_text,
+                 sizeof(region_text),
+                 "%.2f s - %.2f s",
+                 view->region_start_seconds,
+                 view->region_start_seconds + view->region_duration_seconds);
+        const char *labels[4] = {"Duration", "Sample rate", "Channels", "Region"};
+        const char *values[4] = {duration_text, rate_text, channel_text, region_text};
+        float column_width =
+            floorf(((source_card.width - 56.0f) * 0.25f) / 4.0f) * 4.0f;
+        for (int index = 0; index < 4; index++) {
+            float item_x =
+                source_card.x + 16.0f + (column_width + 8.0f) * (float)index;
+            theme_draw_text(theme, labels[index], item_x, info_y, 12.0f, theme->muted_text);
+            draw_fitted_text(theme,
+                             values[index],
+                             item_x,
+                             info_y +
+                                 ceilf(theme_scaled_size(theme, 12.0f) / 4.0f) * 4.0f +
+                                 8.0f,
+                             column_width,
+                             12.0f,
+                             10.0f,
+                             theme->text,
+                             true);
+        }
+        float button_y = source_card.y + source_card.height - 92.0f;
+        float button_width = (source_card.width - 40.0f) * 0.5f;
+        if (draw_button(theme,
+                        (Rectangle){source_card.x + 16.0f, button_y, button_width, 36.0f},
+                        "Open analysis",
+                        theme->accent)) {
+            actions.page = APP_PAGE_ANALYSIS;
+        }
+        if (draw_button(theme,
+                        (Rectangle){source_card.x + 24.0f + button_width,
+                                    button_y,
+                                    button_width,
+                                    36.0f},
+                        "Replace file",
+                        theme->muted_text)) {
+            actions.choose_file = true;
+        }
+        TransportPlayerActions player_actions =
+            draw_transport_player(theme,
+                                  (Rectangle){source_card.x + 16.0f,
+                                              source_card.y + source_card.height - 48.0f,
+                                              source_card.width - 32.0f,
+                                              32.0f},
+                                  &view->source_player);
+        actions.toggle_play_pause = player_actions.toggle_play_pause;
+        actions.stop = player_actions.stop;
+    } else {
+        theme_draw_heading(theme,
+                           "Import audio to start an analysis session.",
+                           source_card.x + 16.0f,
+                           source_card.y + 100.0f,
+                           16.0f,
+                           theme->text);
+        theme_draw_text(theme,
+                        "Supported formats: WAV, MP3, OGG, FLAC",
+                        source_card.x + 16.0f,
+                        source_card.y + 144.0f,
+                        12.0f,
+                        theme->muted_text);
+        if (draw_button(theme,
+                        (Rectangle){source_card.x + 16.0f,
+                                    source_card.y + source_card.height - 56.0f,
+                                    152.0f,
+                                    40.0f},
+                        "Import audio",
+                        theme->accent)) {
+            actions.choose_file = true;
         }
     }
 
-    float scope_title_y = step_y + step_height + 26.0f;
-    float scope_y = scope_title_y + theme_scaled_size(theme, 19.0f) + 12.0f;
-    float scope_height = fmaxf(0.0f, workspace.y + workspace.height - scope_y);
-    theme_draw_heading(theme, "Project scope", workspace.x, scope_title_y, 19.0f, theme->text);
-    Rectangle scope = {workspace.x, scope_y, workspace.width, scope_height};
-    shell_draw_card(theme, scope, "An educational DSP instrument", "Technically real, deliberately focused");
-    float body_y = scope.y + 16.0f + theme_scaled_size(theme, 17.0f) + 5.0f +
-                   theme_scaled_size(theme, 14.0f) + 17.0f;
-    float body_step = theme_scaled_size(theme, 14.0f) + 7.0f;
-    theme_draw_text(theme, "Spectra generates and analyzes audio locally with Fourier methods and additive synthesis.",
-                    scope.x + 22.0f, body_y, 14.0f, theme->muted_text);
-    theme_draw_text(theme, "Every workspace maps directly to a stage in the documented signal pipeline.",
-                    scope.x + 22.0f, body_y + body_step, 14.0f, theme->muted_text);
-    float badge_y = scope.y + scope.height - 38.0f;
-    shell_draw_badge(theme, (Rectangle){scope.x + 22, badge_y, 160, 28}, "LOCAL PROCESSING", theme->accent);
-    shell_draw_badge(theme, (Rectangle){scope.x + 192, badge_y, 132, 28}, "NO AI CLAIMS", (Color){157, 113, 224, 255});
-    return requested_page;
+    draw_dashboard_panel(theme,
+                         results_card,
+                         "Analysis and reconstruction",
+                         "Select a row to open its workspace");
+    char region_status[80];
+    char harmonic_status[80];
+    char fourier_status[80];
+    char full_file_status[96];
+    if (analyzed && view->pitch != NULL && view->pitch->valid) {
+        snprintf(region_status,
+                 sizeof(region_status),
+                 "%.2f Hz | %d peaks",
+                 view->pitch->frequency_hz,
+                 view->peak_count);
+    } else {
+        snprintf(region_status,
+                 sizeof(region_status),
+                 "%s",
+                 source_loaded ? "Region not analyzed" : "Import audio first");
+    }
+    if (view != NULL && view->harmonic_ready) {
+        snprintf(harmonic_status,
+                 sizeof(harmonic_status),
+                 "%d / %d detected",
+                 view->detected_harmonic_count,
+                 view->harmonic_count);
+    } else {
+        snprintf(harmonic_status,
+                 sizeof(harmonic_status),
+                 "Waiting for region analysis");
+    }
+    if (view != NULL && view->fourier_ready) {
+        snprintf(fourier_status,
+                 sizeof(fourier_status),
+                 "%d components rendered",
+                 view->fourier_component_count);
+    } else {
+        snprintf(fourier_status,
+                 sizeof(fourier_status),
+                 "Waiting for region analysis");
+    }
+    if (view != NULL && view->full_file_processing) {
+        snprintf(full_file_status,
+                 sizeof(full_file_status),
+                 "%s | %.0f%%",
+                 view->fixed_global_mode ? "Fixed FFT" : "Time-varying STFT",
+                 view->full_file_progress * 100.0f);
+    } else if (view != NULL && view->full_file_ready) {
+        snprintf(full_file_status,
+                 sizeof(full_file_status),
+                 "%d components | %.1f%% energy",
+                 view->full_file_component_count,
+                 view->retained_energy * 100.0f);
+    } else {
+        snprintf(full_file_status,
+                 sizeof(full_file_status),
+                 "%s",
+                 source_loaded ? "Open to build a model" : "Import audio first");
+    }
+    float status_y = results_card.y + 100.0f;
+    float status_gap = 8.0f;
+    float status_height = 28.0f;
+    if (draw_dashboard_status_row(theme,
+                                  (Rectangle){results_card.x + 16.0f,
+                                              status_y,
+                                              results_card.width - 32.0f,
+                                              status_height},
+                                  "Region analysis",
+                                  region_status,
+                                  analyzed ? ready_color : idle_color)) {
+        actions.page = APP_PAGE_ANALYSIS;
+    }
+    if (draw_dashboard_status_row(theme,
+                                  (Rectangle){results_card.x + 16.0f,
+                                              status_y + status_height + status_gap,
+                                              results_card.width - 32.0f,
+                                              status_height},
+                                  "Harmonic model",
+                                  harmonic_status,
+                                  view != NULL && view->harmonic_ready ? ready_color : idle_color)) {
+        actions.page = APP_PAGE_HARMONIC_LAB;
+    }
+    if (draw_dashboard_status_row(theme,
+                                  (Rectangle){results_card.x + 16.0f,
+                                              status_y + (status_height + status_gap) * 2.0f,
+                                              results_card.width - 32.0f,
+                                              status_height},
+                                  "Fourier frame",
+                                  fourier_status,
+                                  view != NULL && view->fourier_ready ? ready_color : idle_color)) {
+        actions.page = APP_PAGE_HARMONIC_LAB;
+    }
+    if (draw_dashboard_status_row(theme,
+                                  (Rectangle){results_card.x + 16.0f,
+                                              status_y + (status_height + status_gap) * 3.0f,
+                                              results_card.width - 32.0f,
+                                              status_height},
+                                  "Full-file model",
+                                  full_file_status,
+                                  view != NULL && view->full_file_processing
+                                      ? waiting_color
+                                      : (view != NULL && view->full_file_ready ? ready_color
+                                                                               : idle_color))) {
+        actions.page = APP_PAGE_SPECTROGRAM;
+    }
+
+    float workspaces_title_y = main_y + main_height + 8.0f;
+    theme_draw_heading(theme, "Workspaces", workspace.x, workspaces_title_y, 16.0f, theme->text);
+    float tiles_y =
+        workspaces_title_y +
+        ceilf(theme_scaled_size(theme, 16.0f) / 4.0f) * 4.0f + 8.0f;
+    float tile_height =
+        floorf(((workspace.y + workspace.height - tiles_y) / 4.0f)) * 4.0f;
+    float tile_gap = 12.0f;
+    float tile_width =
+        floorf(((workspace.width - tile_gap * 3.0f) / 4.0f) / 4.0f) * 4.0f;
+    float final_tile_width =
+        workspace.width - (tile_width + tile_gap) * 3.0f;
+
+    char harmonic_value[48];
+    if (view != NULL && view->harmonic_ready) {
+        snprintf(harmonic_value,
+                 sizeof(harmonic_value),
+                 "%d harmonics",
+                 view->detected_harmonic_count);
+    } else {
+        snprintf(harmonic_value, sizeof(harmonic_value), "Not ready");
+    }
+    char full_file_value[48];
+    if (view != NULL && view->full_file_processing) {
+        snprintf(full_file_value,
+                 sizeof(full_file_value),
+                 "%.0f%% processing",
+                 view->full_file_progress * 100.0f);
+    } else if (view != NULL && view->full_file_ready) {
+        snprintf(full_file_value,
+                 sizeof(full_file_value),
+                 "%d components",
+                 view->full_file_component_count);
+    } else {
+        snprintf(full_file_value, sizeof(full_file_value), "Not ready");
+    }
+
+    if (draw_dashboard_workspace(theme,
+                                 (Rectangle){workspace.x, tiles_y, tile_width, tile_height},
+                                 "Synthesizer",
+                                 synth_value,
+                                 synth_detail,
+                                 "READY",
+                                 ready_color)) {
+        actions.page = APP_PAGE_SYNTH;
+    }
+    if (draw_dashboard_workspace(theme,
+                                 (Rectangle){workspace.x + tile_width + tile_gap,
+                                             tiles_y,
+                                             tile_width,
+                                             tile_height},
+                                 "Audio Analysis",
+                                 source_loaded ? (analyzed ? "Region analyzed" : "Source loaded")
+                                               : "No source",
+                                 source_loaded ? source_detail : "Import a local audio file",
+                                 analyzed ? "READY" : (source_loaded ? "LOADED" : "EMPTY"),
+                                 analyzed ? ready_color : idle_color)) {
+        actions.page = APP_PAGE_ANALYSIS;
+    }
+    if (draw_dashboard_workspace(theme,
+                                 (Rectangle){workspace.x + (tile_width + tile_gap) * 2.0f,
+                                             tiles_y,
+                                             tile_width,
+                                             tile_height},
+                                 "Harmonic Lab",
+                                 harmonic_value,
+                                 view != NULL && view->fourier_ready ? fourier_status
+                                                                    : "Analyze a region first",
+                                 view != NULL && view->harmonic_ready ? "READY" : "WAIT",
+                                 view != NULL && view->harmonic_ready ? ready_color : idle_color)) {
+        actions.page = APP_PAGE_HARMONIC_LAB;
+    }
+    if (draw_dashboard_workspace(theme,
+                                 (Rectangle){workspace.x + (tile_width + tile_gap) * 3.0f,
+                                             tiles_y,
+                                             final_tile_width,
+                                             tile_height},
+                                 "Spectrogram",
+                                 full_file_value,
+                                 view != NULL && (view->full_file_processing || view->full_file_ready)
+                                     ? (view->fixed_global_mode ? "Fixed whole-file FFT"
+                                                               : "Time-varying STFT")
+                                     : "Build a full-file reconstruction",
+                                 view != NULL && view->full_file_processing
+                                     ? "RUNNING"
+                                     : (view != NULL && view->full_file_ready ? "READY" : "WAIT"),
+                                 view != NULL && view->full_file_processing
+                                     ? waiting_color
+                                     : (view != NULL && view->full_file_ready ? ready_color
+                                                                              : idle_color))) {
+        actions.page = APP_PAGE_SPECTROGRAM;
+    }
+    return actions;
 }
 
 static bool draw_drop_zone(const AppTheme *theme, Rectangle bounds, const char *title, const char *subtitle) {

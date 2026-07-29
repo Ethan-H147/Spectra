@@ -28,6 +28,42 @@ typedef struct {
     bool toggle_help;
 } AppShellFrame;
 
+typedef struct {
+    bool audio_ready;
+    float synth_frequency_hz;
+    int synth_partial_count;
+    float synth_duration_seconds;
+    bool source_loaded;
+    const char *file_name;
+    unsigned int source_channels;
+    unsigned int sample_rate;
+    float source_duration_seconds;
+    float region_start_seconds;
+    float region_duration_seconds;
+    TransportPlayerView source_player;
+    bool analyzed;
+    const PitchEstimate *pitch;
+    int peak_count;
+    bool harmonic_ready;
+    int detected_harmonic_count;
+    int harmonic_count;
+    bool fourier_ready;
+    int fourier_component_count;
+    bool full_file_processing;
+    bool full_file_ready;
+    bool fixed_global_mode;
+    float full_file_progress;
+    int full_file_component_count;
+    float retained_energy;
+} OverviewView;
+
+typedef struct {
+    AppPage page;
+    bool choose_file;
+    bool toggle_play_pause;
+    bool stop;
+} OverviewActions;
+
 typedef enum {
     PEAK_READOUT_INTERPOLATED = 0,
     PEAK_READOUT_FFT_BINS
@@ -192,7 +228,9 @@ AppShellFrame draw_app_shell(const AppTheme *theme,
                              AppPage active_page,
                              bool audio_ready,
                              bool help_open);
-AppPage draw_overview_page(const AppTheme *theme, Rectangle workspace);
+OverviewActions draw_overview_page(const AppTheme *theme,
+                                   Rectangle workspace,
+                                   const OverviewView *view);
 AudioAnalysisActions draw_analysis_page(const AppTheme *theme,
                                         Rectangle workspace,
                                         const AudioAnalysisView *view);

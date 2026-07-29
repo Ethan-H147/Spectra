@@ -2657,8 +2657,84 @@ int main(void) {
                 help_open = false;
             }
         } else if (active_page == APP_PAGE_OVERVIEW) {
-            AppPage requested_page = draw_overview_page(&theme, shell_frame.workspace);
-            if (requested_page != APP_PAGE_COUNT) active_page = requested_page;
+            bool full_file_processing =
+                active_full_file_processing(&imported);
+            OverviewView overview_view = {
+                .audio_ready = audio_ready,
+                .synth_frequency_hz = fundamental,
+                .synth_partial_count = HARMONIC_COUNT,
+                .synth_duration_seconds = duration_seconds,
+                .source_loaded =
+                    imported.audio.mono.samples != NULL,
+                .file_name = imported.file_name,
+                .source_channels = imported.audio.source_channels,
+                .sample_rate = imported.audio.mono.sample_rate,
+                .source_duration_seconds =
+                    imported.audio.duration_seconds,
+                .region_start_seconds =
+                    imported.region_start_seconds,
+                .region_duration_seconds =
+                    imported.region_duration_seconds,
+                .source_player = playback_player_view(
+                    PLAYBACK_ANALYSIS_FULL,
+                    "Original full file",
+                    &clip,
+                    &imported),
+                .analyzed = imported.analyzed,
+                .pitch = &imported.pitch,
+                .peak_count = imported.interpolated_peak_count,
+                .harmonic_ready = imported.harmonic_ready,
+                .detected_harmonic_count =
+                    imported.detected_harmonic_count,
+                .harmonic_count = imported.harmonic_count,
+                .fourier_ready = imported.fourier_ready,
+                .fourier_component_count =
+                    imported.fourier_rendered_components,
+                .full_file_processing = full_file_processing,
+                .full_file_ready =
+                    active_full_file_ready(&imported),
+                .fixed_global_mode =
+                    imported.full_file_mode ==
+                    FULL_FILE_MODE_FIXED_GLOBAL,
+                .full_file_progress =
+                    full_file_processing
+                        ? (imported.full_file_mode ==
+                                   FULL_FILE_MODE_FIXED_GLOBAL
+                               ? background_task_progress(
+                                     &imported.global_task)
+                               : background_task_progress(
+                                     &imported.adaptive_task))
+                        : (active_full_file_ready(&imported)
+                               ? 1.0f
+                               : 0.0f),
+                .full_file_component_count =
+                    active_full_file_rendered_components(
+                        &imported),
+                .retained_energy =
+                    imported.full_file_mode ==
+                            FULL_FILE_MODE_FIXED_GLOBAL
+                        ? imported.global_retained_energy
+                        : imported.adaptive_retained_energy,
+            };
+            OverviewActions overview_actions =
+                draw_overview_page(
+                    &theme,
+                    shell_frame.workspace,
+                    &overview_view);
+            if (overview_actions.page != APP_PAGE_COUNT) {
+                active_page = overview_actions.page;
+            }
+            if (overview_actions.choose_file) {
+                pending_analysis_actions.choose_file = true;
+            }
+            if (overview_actions.toggle_play_pause) {
+                analysis_playback = PLAYBACK_ANALYSIS_FULL;
+                pending_analysis_actions.toggle_play_pause =
+                    true;
+            }
+            if (overview_actions.stop) {
+                pending_analysis_actions.stop = true;
+            }
         } else if (active_page == APP_PAGE_SYNTH) {
             Rectangle workspace = shell_frame.workspace;
             float panel_gap = 16.0f;
