@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Spectra.Native
 
 ScrollView {
     id: root
@@ -155,9 +156,10 @@ ScrollView {
 
                     AppButton {
                         Layout.fillWidth: true
-                        text: "Play region"
+                        text: spectra.regionPlaying
+                            ? "Pause selection"
+                            : "Play selection"
                         quiet: !spectra.regionPlaying
-                        enabled: spectra.analysisReady
                         onClicked: spectra.toggleRegionPlayback()
                     }
                 }
@@ -165,7 +167,7 @@ ScrollView {
                 TransportPlayer {
                     Layout.fillWidth: true
                     visible: spectra.sourceLoaded
-                    title: spectra.regionActive ? "Analyzed region" : "Original full file"
+                    title: spectra.regionActive ? "Selected region" : "Original full file"
                     playing: spectra.sourcePlaying || spectra.regionPlaying
                     position: spectra.playbackPosition
                     duration: spectra.regionActive ? spectra.regionDuration : spectra.sourceDuration
@@ -443,7 +445,6 @@ ScrollView {
                                 || panning) {
                             hoverVisible = false
                             hoveredPeak = -1
-                            requestPaint()
                             return
                         }
 
@@ -485,7 +486,6 @@ ScrollView {
                             hoverY = y
                         }
                         hoverVisible = true
-                        requestPaint()
                     }
 
                     function niceStep(span, targetTickCount) {
@@ -599,80 +599,6 @@ ScrollView {
                             plotY + 0.5,
                             plotWidth - 1,
                             plotHeight - 1)
-
-                        const values = spectra.analysisSpectrum
-                        if (!values || values.length < 2)
-                            return
-
-                        ctx.save()
-                        ctx.beginPath()
-                        ctx.rect(plotX, plotY, plotWidth, plotHeight)
-                        ctx.clip()
-                        ctx.strokeStyle = theme.accent
-                        ctx.lineWidth = 1.5
-                        ctx.beginPath()
-                        let started = false
-                        for (let i = 0; i < values.length; ++i) {
-                            const pointFrequency =
-                                i / values.length * spectrumMaximumFrequency
-                            if (pointFrequency < minimumFrequency)
-                                continue
-                            if (pointFrequency > maximumFrequency)
-                                break
-                            const x = xForFrequency(pointFrequency)
-                            const y = yForDb(Number(values[i]))
-                            if (!started) {
-                                ctx.moveTo(x, y)
-                                started = true
-                            } else {
-                                ctx.lineTo(x, y)
-                            }
-                        }
-                        ctx.stroke()
-
-                        const peaks = spectra.analysisPeaks
-                        ctx.fillStyle = theme.danger
-                        for (let peakIndex = 0; peakIndex < peaks.length; ++peakIndex) {
-                            const peak = peaks[peakIndex]
-                            const pointFrequency = Number(peak.frequency)
-                            const pointDb = Number(peak.db)
-                            if (pointFrequency < minimumFrequency
-                                    || pointFrequency > maximumFrequency
-                                    || pointDb < minimumDb || pointDb > maximumDb) {
-                                continue
-                            }
-                            const x = xForFrequency(pointFrequency)
-                            const y = yForDb(pointDb)
-                            ctx.beginPath()
-                            ctx.arc(x, y, 4.5, 0, Math.PI * 2)
-                            ctx.fill()
-                        }
-
-                        if (hoverVisible && !panning) {
-                            ctx.strokeStyle = hoveredPeak >= 0
-                                ? Qt.rgba(theme.danger.r, theme.danger.g,
-                                    theme.danger.b, 0.62)
-                                : Qt.rgba(theme.muted.r, theme.muted.g,
-                                    theme.muted.b, 0.36)
-                            ctx.lineWidth = 1
-                            ctx.beginPath()
-                            ctx.moveTo(hoverX, plotY)
-                            ctx.lineTo(hoverX, plotY + plotHeight)
-                            ctx.moveTo(plotX, hoverY)
-                            ctx.lineTo(plotX + plotWidth, hoverY)
-                            ctx.stroke()
-                            if (hoveredPeak >= 0) {
-                                ctx.fillStyle = theme.danger
-                                ctx.beginPath()
-                                ctx.arc(hoverX, hoverY, 7, 0, Math.PI * 2)
-                                ctx.fill()
-                                ctx.fillStyle = theme.text
-                                ctx.beginPath()
-                                ctx.arc(hoverX, hoverY, 3, 0, Math.PI * 2)
-                                ctx.fill()
-                            }
-                        }
-                        ctx.restore()
                     }
 
                     Connections {
@@ -689,9 +615,93 @@ ScrollView {
                         }
                     }
 
+                    SpectrumItem {
+                        id: nativeSpectrum
+
+                        anchors.fill: parent
+                        z: 1
+                        visible: spectra.analysisReady
+                        spectrum: spectra.analysisSpectrum
+                        peaks: spectra.analysisPeaks
+                        spectrumMaximumFrequency:
+                            analysisSpectrumCanvas.spectrumMaximumFrequency
+                        minimumFrequency:
+                            analysisSpectrumCanvas.minimumFrequency
+                        maximumFrequency:
+                            analysisSpectrumCanvas.maximumFrequency
+                        minimumDb: analysisSpectrumCanvas.minimumDb
+                        maximumDb: analysisSpectrumCanvas.maximumDb
+                        plotX: analysisSpectrumCanvas.plotX
+                        plotY: analysisSpectrumCanvas.plotY
+                        plotWidth: analysisSpectrumCanvas.plotWidth
+                        plotHeight: analysisSpectrumCanvas.plotHeight
+                        lineColor: theme.accent
+                        peakColor: theme.danger
+                    }
+
+                    Rectangle {
+                        z: 2
+                        visible: analysisSpectrumCanvas.hoverVisible
+                            && !analysisSpectrumCanvas.panning
+                        x: analysisSpectrumCanvas.hoverX
+                        y: analysisSpectrumCanvas.plotY
+                        width: 1
+                        height: analysisSpectrumCanvas.plotHeight
+                        color: analysisSpectrumCanvas.hoveredPeak >= 0
+                            ? Qt.rgba(theme.danger.r, theme.danger.g,
+                                theme.danger.b, 0.62)
+                            : Qt.rgba(theme.muted.r, theme.muted.g,
+                                theme.muted.b, 0.36)
+                    }
+
+                    Rectangle {
+                        z: 2
+                        visible: analysisSpectrumCanvas.hoverVisible
+                            && !analysisSpectrumCanvas.panning
+                        x: analysisSpectrumCanvas.plotX
+                        y: analysisSpectrumCanvas.hoverY
+                        width: analysisSpectrumCanvas.plotWidth
+                        height: 1
+                        color: analysisSpectrumCanvas.hoveredPeak >= 0
+                            ? Qt.rgba(theme.danger.r, theme.danger.g,
+                                theme.danger.b, 0.62)
+                            : Qt.rgba(theme.muted.r, theme.muted.g,
+                                theme.muted.b, 0.36)
+                    }
+
+                    Rectangle {
+                        z: 3
+                        visible: analysisSpectrumCanvas.hoverVisible
+                            && !analysisSpectrumCanvas.panning
+                            && analysisSpectrumCanvas.hoveredPeak >= 0
+                        x: analysisSpectrumCanvas.hoverX - width / 2
+                        y: analysisSpectrumCanvas.hoverY - height / 2
+                        width: 14
+                        height: 14
+                        radius: 7
+                        color: theme.danger
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 6
+                            height: 6
+                            radius: 3
+                            color: theme.text
+                        }
+                    }
+
+                    Timer {
+                        id: spectrumPointerFrame
+
+                        interval: 0
+                        repeat: false
+                        onTriggered: spectrumPointer.flushPointerUpdate()
+                    }
+
                     MouseArea {
                         id: spectrumPointer
                         anchors.fill: parent
+                        z: 4
                         enabled: spectra.analysisReady
                         hoverEnabled: true
                         acceptedButtons: Qt.LeftButton
@@ -701,8 +711,35 @@ ScrollView {
                             : (analysisSpectrumCanvas.containsPlotPoint(mouseX, mouseY)
                                 ? Qt.CrossCursor : Qt.ArrowCursor)
 
-                        property real previousX: 0
-                        property real previousY: 0
+                        property real previousEventX: 0
+                        property real previousEventY: 0
+                        property real accumulatedDeltaX: 0
+                        property real accumulatedDeltaY: 0
+                        property real pendingHoverX: 0
+                        property real pendingHoverY: 0
+                        property bool hoverUpdatePending: false
+
+                        function schedulePointerUpdate() {
+                            if (!spectrumPointerFrame.running)
+                                spectrumPointerFrame.start()
+                        }
+
+                        function flushPointerUpdate() {
+                            if (analysisSpectrumCanvas.panning
+                                    && (accumulatedDeltaX !== 0
+                                        || accumulatedDeltaY !== 0)) {
+                                analysisSpectrumCanvas.panBy(
+                                    accumulatedDeltaX,
+                                    accumulatedDeltaY)
+                                accumulatedDeltaX = 0
+                                accumulatedDeltaY = 0
+                            } else if (hoverUpdatePending) {
+                                analysisSpectrumCanvas.updateHover(
+                                    pendingHoverX,
+                                    pendingHoverY)
+                                hoverUpdatePending = false
+                            }
+                        }
 
                         onPressed: function(mouse) {
                             if (!analysisSpectrumCanvas.containsPlotPoint(
@@ -710,41 +747,51 @@ ScrollView {
                                 mouse.accepted = false
                                 return
                             }
-                            previousX = mouse.x
-                            previousY = mouse.y
+                            previousEventX = mouse.x
+                            previousEventY = mouse.y
+                            accumulatedDeltaX = 0
+                            accumulatedDeltaY = 0
+                            hoverUpdatePending = false
                             analysisSpectrumCanvas.panning = true
                             analysisSpectrumCanvas.hoverVisible = false
-                            analysisSpectrumCanvas.requestPaint()
                         }
 
                         onPositionChanged: function(mouse) {
                             if (analysisSpectrumCanvas.panning && pressed) {
-                                const deltaX = mouse.x - previousX
-                                const deltaY = mouse.y - previousY
-                                previousX = mouse.x
-                                previousY = mouse.y
-                                analysisSpectrumCanvas.panBy(deltaX, deltaY)
+                                accumulatedDeltaX +=
+                                    mouse.x - previousEventX
+                                accumulatedDeltaY +=
+                                    mouse.y - previousEventY
+                                previousEventX = mouse.x
+                                previousEventY = mouse.y
                             } else {
-                                analysisSpectrumCanvas.updateHover(mouse.x, mouse.y)
+                                pendingHoverX = mouse.x
+                                pendingHoverY = mouse.y
+                                hoverUpdatePending = true
                             }
+                            schedulePointerUpdate()
                         }
 
                         onReleased: function(mouse) {
+                            flushPointerUpdate()
                             analysisSpectrumCanvas.panning = false
                             analysisSpectrumCanvas.updateHover(mouse.x, mouse.y)
                         }
 
                         onCanceled: {
+                            spectrumPointerFrame.stop()
+                            accumulatedDeltaX = 0
+                            accumulatedDeltaY = 0
+                            hoverUpdatePending = false
                             analysisSpectrumCanvas.panning = false
                             analysisSpectrumCanvas.hoverVisible = false
-                            analysisSpectrumCanvas.requestPaint()
                         }
 
                         onExited: {
                             if (!analysisSpectrumCanvas.panning) {
+                                hoverUpdatePending = false
                                 analysisSpectrumCanvas.hoverVisible = false
                                 analysisSpectrumCanvas.hoveredPeak = -1
-                                analysisSpectrumCanvas.requestPaint()
                             }
                         }
 
@@ -762,6 +809,7 @@ ScrollView {
                     }
 
                     Row {
+                        z: 5
                         anchors.top: parent.top
                         anchors.right: parent.right
                         anchors.topMargin: theme.space2
@@ -787,6 +835,7 @@ ScrollView {
 
                     Rectangle {
                         id: spectrumTooltip
+                        z: 6
                         visible: analysisSpectrumCanvas.hoverVisible
                             && !analysisSpectrumCanvas.panning
                         width: Math.max(132, tooltipColumn.implicitWidth + 24)

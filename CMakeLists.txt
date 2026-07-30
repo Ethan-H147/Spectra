@@ -97,6 +97,10 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/main.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_item.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_item.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_lod.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_lod.h"
         ${SPECTRA_CORE_SOURCES}
     )
 
@@ -265,6 +269,19 @@ add_executable(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/dsp_types.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/background_task.c"
 )
+
+add_executable(
+    spectrum_lod_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/spectrum_lod_tests.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_lod.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_lod.h"
+)
+target_include_directories(
+    spectrum_lod_tests
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+spectra_enable_warnings(spectrum_lod_tests)
 target_include_directories(
     runtime_tests
     PRIVATE
@@ -280,3 +297,4 @@ enable_testing()
 add_test(NAME dsp_tests COMMAND dsp_tests)
 add_test(NAME audio_import_tests COMMAND audio_import_tests)
 add_test(NAME runtime_tests COMMAND runtime_tests)
+add_test(NAME spectrum_lod_tests COMMAND spectrum_lod_tests)

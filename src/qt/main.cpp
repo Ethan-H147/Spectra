@@ -1,4 +1,5 @@
 #include "qt/spectra_controller.h"
+#include "qt/spectrum_item.h"
 
 extern "C" {
 #include "platform/windows_app.h"
@@ -8,6 +9,7 @@ extern "C" {
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <qqml.h>
 #include <QQuickStyle>
 
 int main(int argc, char *argv[]) {
@@ -18,6 +20,11 @@ int main(int argc, char *argv[]) {
 
     QGuiApplication application(argc, argv);
     application.setWindowIcon(QIcon(QStringLiteral(":/qt/qml/Spectra/assets/spectra-icon.png")));
+    qmlRegisterType<SpectrumItem>(
+        "Spectra.Native",
+        1,
+        0,
+        "SpectrumItem");
 
     SpectraController controller;
     QQmlApplicationEngine engine;

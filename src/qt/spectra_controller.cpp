@@ -935,17 +935,24 @@ void SpectraController::analyzeRegion() {
 }
 
 void SpectraController::playRegion() {
-    if (!analysisReady_) {
-        analyzeRegion();
-    }
-    if (!audioReady_ || !analysisReady_) {
+    if (!audioReady_) {
         return;
     }
+    if (!regionClip_.loaded) {
+        SampleBuffer region = selectedRegion();
+        if (region.samples == nullptr || region.count == 0U ||
+            !audio_clip_set_samples(&regionClip_, &region)) {
+            setStatusText(QStringLiteral("Could not prepare the selected region for playback"));
+            emit playbackChanged();
+            return;
+        }
+    }
+
     haltAllAudio();
     if (audio_clip_play(&regionClip_)) {
         playbackTarget_ = RegionPlayback;
         lastLabPlaybackTarget_ = RegionPlayback;
-        setStatusText(QStringLiteral("Playing analyzed region"));
+        setStatusText(QStringLiteral("Playing selected region"));
         emit playbackChanged();
     }
 }
@@ -965,7 +972,7 @@ void SpectraController::toggleRegionPlayback() {
 }
 
 void SpectraController::seekRegionPlayback(double position) {
-    if (!analysisReady_) {
+    if (!regionClip_.loaded) {
         return;
     }
     lastLabPlaybackTarget_ = RegionPlayback;
