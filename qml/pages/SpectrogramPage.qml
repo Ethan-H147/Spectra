@@ -278,6 +278,9 @@ Item {
                                     text: modelData
                                     enabled: spectra.sourceLoaded
                                         && !spectra.fullFileProcessing
+                                    selected:
+                                        spectra.fullFileSelectionMode
+                                            === index
                                     quiet:
                                         spectra.fullFileSelectionMode
                                             !== index
@@ -304,16 +307,20 @@ Item {
                         AppButton {
                             Layout.fillWidth: true
                             text: "Original"
+                            selected:
+                                spectra.fullFilePlaybackSelection === 0
+                            quiet:
+                                spectra.fullFilePlaybackSelection !== 0
                             onClicked: spectra.playFullFileOriginal()
                         }
 
                         AppButton {
                             Layout.fillWidth: true
-                            text: spectra.fullFileProcessing
-                                ? "Building..."
-                                : (spectra.fullFileReady
-                                    ? "Reconstruction"
-                                    : "Build reconstruction")
+                            text: "Reconstruction"
+                            selected:
+                                spectra.fullFilePlaybackSelection === 1
+                            quiet:
+                                spectra.fullFilePlaybackSelection !== 1
                             enabled: spectra.sourceLoaded
                                 && spectra.fullFileMaximumComponents > 0
                                 && !spectra.fullFileProcessing
@@ -339,11 +346,13 @@ Item {
                         Layout.fillWidth: true
                         visible: spectra.sourceLoaded
                         enabled: spectra.sourceLoaded
-                        title: root.fixedGlobal
-                            ? (spectra.fullFileChannelMode === 1
-                                ? "Stereo whole-file FFT"
-                                : "Mono whole-file FFT")
-                            : "Time-varying STFT"
+                        title: spectra.fullFilePlaybackSelection === 0
+                            ? "Original full file"
+                            : (root.fixedGlobal
+                                ? (spectra.fullFileChannelMode === 1
+                                    ? "Stereo whole-file FFT"
+                                    : "Mono whole-file FFT")
+                                : "Time-varying STFT")
                         playing: spectra.fullFilePlaying
                         position: spectra.playbackPosition
                         duration: spectra.playbackDuration > 0
@@ -585,15 +594,6 @@ Item {
                         wrapMode: Text.Wrap
                     }
 
-                    AppButton {
-                        Layout.fillWidth: true
-                        text: spectra.fullFileReady ? "Rebuild model" : "Build model"
-                        enabled: spectra.sourceLoaded
-                            && spectra.fullFileMaximumComponents > 0
-                            && !spectra.fullFileProcessing
-                        onClicked: spectra.buildFullFileModel()
-                    }
-
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: theme.space1
@@ -639,6 +639,9 @@ Item {
 
                     Item {
                         Layout.fillHeight: true
+                        Layout.minimumHeight: stickyBuildBar.visible
+                            ? stickyBuildBar.height
+                            : 0
                     }
                 }
             }
@@ -1040,6 +1043,43 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    Rectangle {
+        id: stickyBuildBar
+
+        z: 10
+        visible: spectra.sourceLoaded
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        width: root.compact ? root.width : inspectorPanel.width
+        height: 64
+        color: theme.panel
+        border.width: 1
+        border.color: theme.border
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 2
+            color: theme.accent
+            opacity: spectra.fullFileProcessing ? 1 : 0
+        }
+
+        AppButton {
+            anchors.fill: parent
+            anchors.margins: theme.space1
+            text: spectra.fullFileProcessing
+                ? "Processing "
+                    + Math.round(spectra.fullFileProgress * 100) + "%"
+                : (spectra.fullFileReady
+                    ? "Rebuild model"
+                    : "Build model")
+            enabled: spectra.fullFileMaximumComponents > 0
+                && !spectra.fullFileProcessing
+            onClicked: spectra.buildFullFileModel()
         }
     }
 }

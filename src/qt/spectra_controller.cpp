@@ -694,6 +694,10 @@ bool SpectraController::fullFilePlaying() const {
         (playbackTarget_ == SourcePlayback && audio_clip_is_playing(&sourceClip_));
 }
 
+int SpectraController::fullFilePlaybackSelection() const {
+    return lastFullFilePlaybackTarget_ == FullFilePlayback ? 1 : 0;
+}
+
 void SpectraController::setCurrentPage(int page) {
     const int bounded = std::max(0, std::min(page, 5));
     if (bounded == currentPage_) {
@@ -1353,6 +1357,8 @@ void SpectraController::buildFullFileModel() {
         return;
     }
 
+    lastFullFilePlaybackTarget_ = FullFilePlayback;
+    emit playbackChanged();
     clearFullFileOutput();
     fullFileProgress_ = 0.0;
     if (restoreFullFileOutput()) {
@@ -1373,7 +1379,12 @@ void SpectraController::buildFullFileModel() {
 }
 
 void SpectraController::playFullFileOriginal() {
-    if (!audioReady_ || !sourceLoaded()) {
+    if (!sourceLoaded()) {
+        return;
+    }
+    lastFullFilePlaybackTarget_ = SourcePlayback;
+    emit playbackChanged();
+    if (!audioReady_) {
         return;
     }
     haltAllAudio();
@@ -1385,7 +1396,12 @@ void SpectraController::playFullFileOriginal() {
 }
 
 void SpectraController::playFullFileReconstruction() {
-    if (!audioReady_ || !fullFileReady()) {
+    if (!fullFileReady()) {
+        return;
+    }
+    lastFullFilePlaybackTarget_ = FullFilePlayback;
+    emit playbackChanged();
+    if (!audioReady_) {
         return;
     }
     haltAllAudio();
@@ -1407,7 +1423,8 @@ void SpectraController::toggleFullFilePlayback() {
         clip = &sourceClip_;
     }
     if (clip == nullptr) {
-        if (fullFileReady()) {
+        if (lastFullFilePlaybackTarget_ == FullFilePlayback &&
+            fullFileReady()) {
             playFullFileReconstruction();
         } else {
             playFullFileOriginal();
@@ -1438,7 +1455,8 @@ void SpectraController::seekFullFilePlayback(double position) {
         clip = &fullFileClip_;
     } else if (target == SourcePlayback) {
         clip = &sourceClip_;
-    } else if (fullFileReady()) {
+    } else if (lastFullFilePlaybackTarget_ == FullFilePlayback &&
+        fullFileReady()) {
         target = FullFilePlayback;
         clip = &fullFileClip_;
     } else {
@@ -1913,7 +1931,9 @@ void SpectraController::resetFullFile() {
     fullFileRetainedEnergy_ = 0.0;
     fullFileFrameCount_ = 0;
     spectrogramImageUrl_ = QUrl();
+    lastFullFilePlaybackTarget_ = SourcePlayback;
     emit fullFileChanged();
+    emit playbackChanged();
 }
 
 void SpectraController::cacheFullFileOutput() {

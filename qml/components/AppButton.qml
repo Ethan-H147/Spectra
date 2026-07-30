@@ -7,6 +7,7 @@ Button {
     property color accentColor: theme.accent
     property bool quiet: false
     property bool compact: false
+    property bool selected: false
 
     implicitHeight: compact ? 32 : 40
     implicitWidth: compact
@@ -21,7 +22,9 @@ Button {
     contentItem: Text {
         text: control.text
         color: control.enabled
-            ? (control.quiet ? theme.muted : theme.text)
+            ? (control.selected
+                ? theme.text
+                : (control.quiet ? theme.muted : theme.text))
             : theme.quiet
         font.family: theme.headingFamily
         font.pixelSize: theme.fontSize(12)
@@ -35,11 +38,27 @@ Button {
         radius: 4
         color: control.down
             ? Qt.lighter(theme.raisedPanel, 1.12)
-            : (control.hovered ? theme.raisedPanel : theme.panel)
+            : (control.selected
+                ? theme.raisedPanel
+                : (control.hovered ? theme.raisedPanel : theme.panel))
         border.width: 1
         border.color: control.enabled
-            ? (control.hovered ? control.accentColor : theme.border)
+            ? (control.hovered
+                ? control.accentColor
+                : (control.selected ? theme.hoverBorder : theme.border))
             : theme.border
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 4
+            anchors.rightMargin: 4
+            height: 2
+            radius: 1
+            color: control.accentColor
+            visible: control.selected
+        }
 
         scale: control.down ? 0.98 : 1.0
         Behavior on scale {

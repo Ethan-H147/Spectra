@@ -105,6 +105,7 @@ class SpectraController final : public QObject {
     Q_PROPERTY(double spectrogramMaximumFrequency READ spectrogramMaximumFrequency NOTIFY fullFileChanged)
     Q_PROPERTY(QUrl spectrogramImageUrl READ spectrogramImageUrl NOTIFY fullFileChanged)
     Q_PROPERTY(bool fullFilePlaying READ fullFilePlaying NOTIFY playbackChanged)
+    Q_PROPERTY(int fullFilePlaybackSelection READ fullFilePlaybackSelection NOTIFY playbackChanged)
 
 public:
     explicit SpectraController(QObject *parent = nullptr);
@@ -193,6 +194,7 @@ public:
     double spectrogramMaximumFrequency() const;
     QUrl spectrogramImageUrl() const;
     bool fullFilePlaying() const;
+    int fullFilePlaybackSelection() const;
 
     Q_INVOKABLE void setCurrentPage(int page);
     Q_INVOKABLE void setTextScale(double scale);
@@ -394,6 +396,7 @@ private:
     QUrl spectrogramImageUrl_;
 
     PlaybackTarget playbackTarget_ = NoPlayback;
+    PlaybackTarget lastFullFilePlaybackTarget_ = SourcePlayback;
     QTimer synthRebuildTimer_;
     QTimer playbackTimer_;
     QTimer fullFileTimer_;

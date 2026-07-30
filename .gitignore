@@ -1,18 +1,25 @@
-# Ignore compiled desktop binaries and build output
-my_program
-my_program.exe
-c_spectra
-build/
-build-windows/
-build-qt/
-vcpkg_installed/
-dsp_tests
+# Generated build trees
+/build/
+/build-*/
+/vcpkg_installed/
 
-# Ignore VS Code settings folders (optional, but good practice)
-.vscode/
-
-# Ignore object files (intermediate compile steps)
+# Compiled output
+*.dll
+*.exe
+*.exp
+*.ilk
+*.lib
+*.obj
 *.o
+*.pdb
+/c_spectra
+/my_program
+/test
 
-# Ignore large media files (we do not want to commit local audio samples)
+# Local media and exported audio
 *.wav
+
+# Editor and operating-system state
+/.vscode/
+.DS_Store
+Thumbs.db
