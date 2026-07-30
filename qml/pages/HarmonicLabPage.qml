@@ -22,6 +22,20 @@ Item {
             width: scrollView.availableWidth
             spacing: theme.space2
 
+            Panel {
+                Layout.fillWidth: true
+                visible: !spectra.analysisReady
+                title: "Reconstruction needs an analyzed region"
+                subtitle: spectra.sourceLoaded
+                    ? "Select and analyze a region in Audio Analysis"
+                    : "Import audio in Audio Analysis"
+
+                AppButton {
+                    text: "Open Audio Analysis"
+                    onClicked: spectra.setCurrentPage(2)
+                }
+            }
+
             GridLayout {
                 Layout.fillWidth: true
                 columns: width < 1000 ? 2 : 4
@@ -88,6 +102,22 @@ Item {
                         onClicked: spectra.playFourierFrame()
                     }
                 }
+            }
+
+            TransportPlayer {
+                Layout.fillWidth: true
+                visible: spectra.analysisReady
+                title: spectra.labPlaybackTitle
+                playing: spectra.regionPlaying
+                    || spectra.harmonicPlaying
+                    || spectra.framePlaying
+                    || spectra.fourierPlaying
+                position: spectra.playbackPosition
+                duration: spectra.playbackDuration > 0
+                    ? spectra.playbackDuration
+                    : spectra.regionDuration
+                onToggleRequested: spectra.toggleLabPlayback()
+                onStopRequested: spectra.stopPlayback()
             }
 
             GridLayout {
@@ -262,34 +292,132 @@ Item {
                             onClicked: spectra.rebuildFourierFrame(Math.round(componentSlider.value))
                         }
 
+                        Text {
+                            Layout.fillWidth: true
+                            text: spectra.fourierFrameReady
+                                ? spectra.fourierFftSize.toLocaleString(
+                                    Qt.locale(), "f", 0)
+                                    + " samples  |  "
+                                    + spectra.fourierFrameDuration.toFixed(3)
+                                    + " s  |  "
+                                    + spectra.fourierMaximumComponents
+                                    + " available bins"
+                                : "Analyze a region containing at least eight samples."
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(10.5)
+                            wrapMode: Text.Wrap
+                        }
+
                         Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: 1
                             color: theme.border
                         }
 
-                        StatusRow {
+                        RowLayout {
                             Layout.fillWidth: true
-                            interactive: false
-                            label: "FFT frame"
-                            value: spectra.fourierFrameReady ? "Ready" : "Unavailable"
-                            stateColor: spectra.fourierFrameReady ? theme.success : theme.quiet
+
+                            Text {
+                                Layout.preferredWidth: 32
+                                text: "#"
+                                color: theme.quiet
+                                font.family: theme.headingFamily
+                                font.pixelSize: theme.fontSize(10)
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Frequency"
+                                color: theme.quiet
+                                font.family: theme.headingFamily
+                                font.pixelSize: theme.fontSize(10)
+                            }
+
+                            Text {
+                                Layout.preferredWidth: 72
+                                text: "Level"
+                                color: theme.quiet
+                                font.family: theme.headingFamily
+                                font.pixelSize: theme.fontSize(10)
+                            }
+
+                            Text {
+                                Layout.preferredWidth: 88
+                                text: "Phase"
+                                color: theme.quiet
+                                font.family: theme.headingFamily
+                                font.pixelSize: theme.fontSize(10)
+                            }
                         }
 
-                        StatusRow {
-                            Layout.fillWidth: true
-                            interactive: false
-                            label: "Components"
-                            value: spectra.fourierSelectedComponents + " / " + spectra.fourierMaximumComponents
-                            stateColor: spectra.fourierFrameReady ? theme.success : theme.quiet
+                        Repeater {
+                            model: spectra.fourierComponents
+
+                            Rectangle {
+                                required property var modelData
+
+                                Layout.fillWidth: true
+                                implicitHeight: 30
+                                radius: 3
+                                color: theme.canvas
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: theme.space1
+                                    anchors.rightMargin: theme.space1
+
+                                    Text {
+                                        Layout.preferredWidth: 24
+                                        text: modelData.rank
+                                        color: theme.text
+                                        font.family: theme.headingFamily
+                                        font.pixelSize: theme.fontSize(10.5)
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: Number(
+                                            modelData.frequency).toFixed(1)
+                                            + " Hz"
+                                        color: theme.text
+                                        font.family: theme.bodyFamily
+                                        font.pixelSize: theme.fontSize(10.5)
+                                    }
+
+                                    Text {
+                                        Layout.preferredWidth: 72
+                                        text: Number(
+                                            modelData.db).toFixed(1)
+                                            + " dB"
+                                        color: theme.muted
+                                        font.family: theme.bodyFamily
+                                        font.pixelSize: theme.fontSize(10.5)
+                                    }
+
+                                    Text {
+                                        Layout.preferredWidth: 80
+                                        text: (Number(modelData.phase) >= 0
+                                            ? "+" : "")
+                                            + Number(
+                                                modelData.phase).toFixed(2)
+                                            + " rad"
+                                        color: theme.muted
+                                        font.family: theme.bodyFamily
+                                        font.pixelSize: theme.fontSize(10.5)
+                                    }
+                                }
+                            }
                         }
 
-                        StatusRow {
+                        Text {
                             Layout.fillWidth: true
-                            interactive: false
-                            label: "Phase"
-                            value: "Preserved per complex coefficient"
-                            stateColor: spectra.fourierFrameReady ? theme.success : theme.quiet
+                            visible: spectra.fourierFrameReady
+                                && spectra.fourierComponents.length === 0
+                            text: "No Fourier components selected."
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(10.5)
                         }
 
                         Item {

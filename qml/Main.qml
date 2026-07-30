@@ -157,12 +157,42 @@ ApplicationWindow {
 
                         Repeater {
                             model: [
-                                ["Overview", "Session status, imported source, and workspace readiness."],
-                                ["Synthesizer", "Generate a 16-harmonic tone and export its WAV data."],
-                                ["Audio Analysis", "Select a source region, then inspect pitch and spectral peaks."],
-                                ["Harmonic Lab", "Compare integer-harmonic resynthesis with a ranked Fourier frame."],
-                                ["Spectrogram", "Inspect source STFT data and build reduced whole-file models."],
-                                ["Settings", "Change text scale and inspect the current audio runtime."]
+                                {
+                                    "title": "Overview",
+                                    "summary": "Review the imported source and each workspace state.",
+                                    "steps": "Import audio, then select a workspace row to continue.",
+                                    "details": "The source transport and readiness rows are live controls."
+                                },
+                                {
+                                    "title": "Synthesizer",
+                                    "summary": "Build a tone from a fundamental and 16 harmonics.",
+                                    "steps": "Choose a preset, adjust the tone, then play or export it.",
+                                    "details": "The plots show the waveform envelope, FFT peaks, and pitch."
+                                },
+                                {
+                                    "title": "Audio Analysis",
+                                    "summary": "Analyze one time region from the imported source.",
+                                    "steps": "Set the region, run the FFT, then inspect its peaks and pitch.",
+                                    "details": "Drag to pan, use the wheel to zoom, and reset the view when needed."
+                                },
+                                {
+                                    "title": "Harmonic Lab",
+                                    "summary": "Compare harmonic and phase-preserving reconstructions.",
+                                    "steps": "Analyze a region first, then play each model from the shared transport.",
+                                    "details": "Adjust Top-N before rebuilding or exporting the Fourier frame."
+                                },
+                                {
+                                    "title": "Spectrogram",
+                                    "summary": "Build a mono FFT, stereo FFT, or time-varying STFT model.",
+                                    "steps": "Choose a model and bin or energy budget, then build it.",
+                                    "details": "The page reports memory estimates, progress, retained energy, and output channels."
+                                },
+                                {
+                                    "title": "Settings",
+                                    "summary": "Inspect runtime values and configure display and FFT memory.",
+                                    "steps": "Set text scale or the whole-file FFT memory ceiling.",
+                                    "details": "The remaining rows report current source, analysis, and shortcut values."
+                                }
                             ]
 
                             Rectangle {
@@ -182,7 +212,7 @@ ApplicationWindow {
                                     spacing: theme.space1
 
                                     Text {
-                                        text: modelData[0]
+                                        text: modelData.title
                                         color: theme.text
                                         font.family: theme.headingFamily
                                         font.pixelSize: theme.fontSize(13)
@@ -191,10 +221,28 @@ ApplicationWindow {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        text: modelData[1]
+                                        text: modelData.summary
                                         color: theme.muted
                                         font.family: theme.bodyFamily
                                         font.pixelSize: theme.fontSize(11)
+                                        wrapMode: Text.Wrap
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.steps
+                                        color: theme.text
+                                        font.family: theme.bodyFamily
+                                        font.pixelSize: theme.fontSize(10.5)
+                                        wrapMode: Text.Wrap
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.details
+                                        color: theme.muted
+                                        font.family: theme.bodyFamily
+                                        font.pixelSize: theme.fontSize(10.5)
                                         wrapMode: Text.Wrap
                                     }
                                 }

@@ -9,6 +9,7 @@
 extern "C" {
 #include "audio/audio_engine.h"
 #include "audio/audio_import.h"
+#include "audio/reconstruction_cache.h"
 #include "dsp/dsp_types.h"
 #include "dsp/fourier_reconstruction.h"
 #include "dsp/global_fourier_reconstruction.h"
@@ -32,7 +33,10 @@ class SpectraController final : public QObject {
     Q_PROPERTY(QString synthPresetName READ synthPresetName NOTIFY synthChanged)
     Q_PROPERTY(QVariantList harmonicAmplitudes READ harmonicAmplitudes NOTIFY synthChanged)
     Q_PROPERTY(QVariantList synthWaveform READ synthWaveform NOTIFY synthVisualizationChanged)
+    Q_PROPERTY(QVariantList synthWaveformMinimums READ synthWaveformMinimums NOTIFY synthVisualizationChanged)
+    Q_PROPERTY(QVariantList synthWaveformMaximums READ synthWaveformMaximums NOTIFY synthVisualizationChanged)
     Q_PROPERTY(QVariantList synthSpectrum READ synthSpectrum NOTIFY synthVisualizationChanged)
+    Q_PROPERTY(QVariantList synthPeaks READ synthPeaks NOTIFY synthVisualizationChanged)
     Q_PROPERTY(QString synthPitch READ synthPitch NOTIFY synthVisualizationChanged)
     Q_PROPERTY(QString synthNote READ synthNote NOTIFY synthVisualizationChanged)
     Q_PROPERTY(int synthPeakCount READ synthPeakCount NOTIFY synthVisualizationChanged)
@@ -54,6 +58,7 @@ class SpectraController final : public QObject {
     Q_PROPERTY(QVariantList sourceWaveformMaximums READ sourceWaveformMaximums NOTIFY sourceChanged)
     Q_PROPERTY(QVariantList analysisSpectrum READ analysisSpectrum NOTIFY analysisChanged)
     Q_PROPERTY(QVariantList analysisPeaks READ analysisPeaks NOTIFY analysisChanged)
+    Q_PROPERTY(int analysisPeakReadoutMode READ analysisPeakReadoutMode NOTIFY analysisChanged)
     Q_PROPERTY(QString analysisPitch READ analysisPitch NOTIFY analysisChanged)
     Q_PROPERTY(QString analysisNote READ analysisNote NOTIFY analysisChanged)
     Q_PROPERTY(double analysisConfidence READ analysisConfidence NOTIFY analysisChanged)
@@ -68,13 +73,25 @@ class SpectraController final : public QObject {
     Q_PROPERTY(bool fourierFrameReady READ fourierFrameReady NOTIFY reconstructionChanged)
     Q_PROPERTY(int fourierMaximumComponents READ fourierMaximumComponents NOTIFY reconstructionChanged)
     Q_PROPERTY(int fourierSelectedComponents READ fourierSelectedComponents NOTIFY reconstructionChanged)
+    Q_PROPERTY(int fourierFftSize READ fourierFftSize NOTIFY reconstructionChanged)
+    Q_PROPERTY(double fourierFrameDuration READ fourierFrameDuration NOTIFY reconstructionChanged)
+    Q_PROPERTY(QVariantList fourierComponents READ fourierComponents NOTIFY reconstructionChanged)
     Q_PROPERTY(bool harmonicPlaying READ harmonicPlaying NOTIFY playbackChanged)
     Q_PROPERTY(bool framePlaying READ framePlaying NOTIFY playbackChanged)
     Q_PROPERTY(bool fourierPlaying READ fourierPlaying NOTIFY playbackChanged)
+    Q_PROPERTY(QString labPlaybackTitle READ labPlaybackTitle NOTIFY playbackChanged)
 
     Q_PROPERTY(bool fullFileProcessing READ fullFileProcessing NOTIFY fullFileChanged)
     Q_PROPERTY(bool fullFileReady READ fullFileReady NOTIFY fullFileChanged)
     Q_PROPERTY(int fullFileMode READ fullFileMode NOTIFY fullFileChanged)
+    Q_PROPERTY(int fullFileChannelMode READ fullFileChannelMode NOTIFY fullFileChanged)
+    Q_PROPERTY(int fullFileSelectionMode READ fullFileSelectionMode NOTIFY fullFileChanged)
+    Q_PROPERTY(double fullFileEnergyTarget READ fullFileEnergyTarget NOTIFY fullFileChanged)
+    Q_PROPERTY(qulonglong fullFileEstimatedMonoBytes READ fullFileEstimatedMonoBytes NOTIFY fullFileChanged)
+    Q_PROPERTY(qulonglong fullFileEstimatedSourceBytes READ fullFileEstimatedSourceBytes NOTIFY fullFileChanged)
+    Q_PROPERTY(qulonglong fullFileMemoryLimitBytes READ fullFileMemoryLimitBytes NOTIFY fullFileChanged)
+    Q_PROPERTY(int fullFileCacheEntries READ fullFileCacheEntries NOTIFY fullFileChanged)
+    Q_PROPERTY(int fullFileOutputChannels READ fullFileOutputChannels NOTIFY fullFileChanged)
     Q_PROPERTY(double fullFileProgress READ fullFileProgress NOTIFY fullFileChanged)
     Q_PROPERTY(int fullFileSelectedComponents READ fullFileSelectedComponents NOTIFY fullFileChanged)
     Q_PROPERTY(int fullFileMaximumComponents READ fullFileMaximumComponents NOTIFY fullFileChanged)
@@ -104,7 +121,10 @@ public:
     QString synthPresetName() const;
     QVariantList harmonicAmplitudes() const;
     QVariantList synthWaveform() const;
+    QVariantList synthWaveformMinimums() const;
+    QVariantList synthWaveformMaximums() const;
     QVariantList synthSpectrum() const;
+    QVariantList synthPeaks() const;
     QString synthPitch() const;
     QString synthNote() const;
     int synthPeakCount() const;
@@ -126,6 +146,7 @@ public:
     QVariantList sourceWaveformMaximums() const;
     QVariantList analysisSpectrum() const;
     QVariantList analysisPeaks() const;
+    int analysisPeakReadoutMode() const;
     QString analysisPitch() const;
     QString analysisNote() const;
     double analysisConfidence() const;
@@ -140,13 +161,25 @@ public:
     bool fourierFrameReady() const;
     int fourierMaximumComponents() const;
     int fourierSelectedComponents() const;
+    int fourierFftSize() const;
+    double fourierFrameDuration() const;
+    QVariantList fourierComponents() const;
     bool harmonicPlaying() const;
     bool framePlaying() const;
     bool fourierPlaying() const;
+    QString labPlaybackTitle() const;
 
     bool fullFileProcessing() const;
     bool fullFileReady() const;
     int fullFileMode() const;
+    int fullFileChannelMode() const;
+    int fullFileSelectionMode() const;
+    double fullFileEnergyTarget() const;
+    qulonglong fullFileEstimatedMonoBytes() const;
+    qulonglong fullFileEstimatedSourceBytes() const;
+    qulonglong fullFileMemoryLimitBytes() const;
+    int fullFileCacheEntries() const;
+    int fullFileOutputChannels() const;
     double fullFileProgress() const;
     int fullFileSelectedComponents() const;
     int fullFileMaximumComponents() const;
@@ -172,16 +205,22 @@ public:
     Q_INVOKABLE void toggleSourcePlayback();
     Q_INVOKABLE void setRegionStart(double start);
     Q_INVOKABLE void setRegionDuration(double duration);
+    Q_INVOKABLE void setAnalysisPeakReadoutMode(int mode);
     Q_INVOKABLE void analyzeRegion();
     Q_INVOKABLE void playRegion();
     Q_INVOKABLE void toggleRegionPlayback();
     Q_INVOKABLE void playHarmonicModel();
     Q_INVOKABLE void playOriginalFrame();
     Q_INVOKABLE void playFourierFrame();
+    Q_INVOKABLE void toggleLabPlayback();
     Q_INVOKABLE void rebuildFourierFrame(int componentCount);
     Q_INVOKABLE bool exportHarmonicFile(const QUrl &url);
     Q_INVOKABLE bool exportFourierFile(const QUrl &url);
     Q_INVOKABLE void setFullFileMode(int mode);
+    Q_INVOKABLE void setFullFileChannelMode(int mode);
+    Q_INVOKABLE void setFullFileSelectionMode(int mode);
+    Q_INVOKABLE void setFullFileEnergyTarget(double target);
+    Q_INVOKABLE void setFullFileMemoryLimitBytes(qulonglong bytes);
     Q_INVOKABLE void setFullFileComponentCount(int componentCount);
     Q_INVOKABLE void buildFullFileModel();
     Q_INVOKABLE void playFullFileOriginal();
@@ -230,12 +269,15 @@ private:
     void rebuildSynth();
     void rebuildSynthVisualization();
     void rebuildSourceWaveform();
+    void rebuildAnalysisPeaks();
     void rebuildAnalysisVisualization();
     void rebuildRegionModels(const SampleBuffer &region);
     bool rebuildFourierFrameBuffer(int componentCount);
     SampleBuffer selectedRegion() const;
     void resetAnalysis();
     void resetFullFile();
+    void cacheFullFileOutput();
+    bool restoreFullFileOutput();
     void clearFullFileOutput();
     void startSpectrogramBuild();
     bool startGlobalAnalysis();
@@ -266,10 +308,14 @@ private:
     Harmonic harmonics_[16] = {};
     SampleBuffer synthBuffer_ = {};
     Spectrum synthSpectrumBuffer_ = {};
+    Peak synthPeaksBuffer_[12] = {};
     PitchEstimate synthPitchEstimate_ = {};
     int synthPeakCount_ = 0;
     QVariantList synthWaveform_;
+    QVariantList synthWaveformMinimums_;
+    QVariantList synthWaveformMaximums_;
     QVariantList synthSpectrum_;
+    QVariantList synthPeaks_;
     AudioClip synthClip_ = {};
 
     ImportedAudio importedAudio_ = {};
@@ -285,6 +331,7 @@ private:
     Spectrum analysisSpectrumBuffer_ = {};
     Peak analysisPeaksBuffer_[64] = {};
     int analysisPeakCount_ = 0;
+    int analysisPeakReadoutMode_ = 0;
     PitchEstimate analysisPitchEstimate_ = {};
     QVariantList analysisSpectrum_;
     QVariantList analysisPeaks_;
@@ -300,16 +347,23 @@ private:
     AudioClip originalFrameClip_ = {};
     AudioClip fourierClip_ = {};
     int fourierSelectedComponents_ = 0;
+    PlaybackTarget lastLabPlaybackTarget_ = RegionPlayback;
 
     StftReconstructionJob spectrogramJob_ = {};
     GlobalFourierJob globalFourierJob_ = {};
     GlobalFourierJob globalFourierJobRight_ = {};
     StftReconstructionJob fullFileStftJob_ = {};
     StftReconstructionJob fullFileStftJobRight_ = {};
+    ReconstructionCache reconstructionCache_ = {};
     InterleavedBuffer fullFileBuffer_ = {};
     AudioClip fullFileClip_ = {};
     FullFileWork fullFileWork_ = FullFileIdle;
     int fullFileMode_ = 0;
+    int fullFileChannelMode_ = 0;
+    int fullFileSelectionMode_ = 0;
+    double fullFileEnergyTarget_ = 0.90;
+    qulonglong fullFileMemoryLimitBytes_ =
+        768ULL * 1024ULL * 1024ULL;
     int fullFileSelectedComponents_ = 5;
     int globalSelectedComponents_ = 5;
     int stftSelectedComponents_ = 100;

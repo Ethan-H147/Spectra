@@ -689,6 +689,7 @@ ScrollView {
                         enabled: spectra.analysisReady
                         hoverEnabled: true
                         acceptedButtons: Qt.LeftButton
+                        preventStealing: true
                         cursorShape: analysisSpectrumCanvas.panning
                             ? Qt.ClosedHandCursor
                             : (analysisSpectrumCanvas.containsPlotPoint(mouseX, mouseY)
@@ -754,16 +755,35 @@ ScrollView {
                         }
                     }
 
-                    AppButton {
+                    Row {
                         anchors.top: parent.top
                         anchors.right: parent.right
                         anchors.topMargin: theme.space2
                         anchors.rightMargin: theme.space2
-                        compact: true
-                        quiet: true
-                        text: "Reset view"
+                        spacing: theme.space1
                         visible: spectra.analysisReady
-                        onClicked: analysisSpectrumCanvas.resetView()
+
+                        Repeater {
+                            model: ["Interpolated", "FFT bins"]
+
+                            AppButton {
+                                required property int index
+                                required property string modelData
+
+                                compact: true
+                                quiet: spectra.analysisPeakReadoutMode !== index
+                                text: modelData
+                                onClicked:
+                                    spectra.setAnalysisPeakReadoutMode(index)
+                            }
+                        }
+
+                        AppButton {
+                            compact: true
+                            quiet: true
+                            text: "Reset view"
+                            onClicked: analysisSpectrumCanvas.resetView()
+                        }
                     }
 
                     Rectangle {
@@ -847,6 +867,48 @@ ScrollView {
                         spacing: theme.space1
 
                         Text {
+                            text: "Detected peaks"
+                            color: theme.text
+                            font.family: theme.headingFamily
+                            font.pixelSize: theme.fontSize(16)
+                            font.weight: Font.DemiBold
+                        }
+
+                        Repeater {
+                            model: Math.min(
+                                3, spectra.analysisPeaks.length)
+
+                            Text {
+                                required property int index
+
+                                readonly property var peak:
+                                    spectra.analysisPeaks[index]
+
+                                text: (index + 1) + ".  "
+                                    + Number(peak.frequency).toFixed(1)
+                                    + " Hz   "
+                                    + Number(peak.db).toFixed(1)
+                                    + " dB"
+                                color: theme.muted
+                                font.family: theme.bodyFamily
+                                font.pixelSize: theme.fontSize(11)
+                            }
+                        }
+
+                        Text {
+                            visible: spectra.analysisPeakCount === 0
+                            text: "No peaks above -55 dB"
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(11)
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: theme.space1
+
+                        Text {
                             text: "Estimated pitch"
                             color: theme.text
                             font.family: theme.headingFamily
@@ -891,7 +953,10 @@ ScrollView {
                         }
 
                         Text {
-                            text: spectra.analysisPeakCount + " interpolated spectral peaks"
+                            text: spectra.analysisPeakCount + " "
+                                + (spectra.analysisPeakReadoutMode === 0
+                                    ? "interpolated peaks"
+                                    : "FFT-bin peaks")
                             color: theme.muted
                             font.family: theme.bodyFamily
                             font.pixelSize: theme.fontSize(12)

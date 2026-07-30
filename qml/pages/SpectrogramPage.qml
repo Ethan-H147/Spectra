@@ -19,6 +19,19 @@ Item {
         : (spectra.fullFileReady
             ? theme.success
             : (spectra.sourceLoaded ? theme.warning : theme.quiet))
+    readonly property bool fixedGlobal: spectra.fullFileMode === 0
+    readonly property bool energySelection:
+        fixedGlobal && spectra.fullFileSelectionMode === 1
+    readonly property int selectedModel:
+        spectra.fullFileMode === 1
+            ? 2
+            : (spectra.fullFileChannelMode === 1 ? 1 : 0)
+    readonly property var reconstructionPresets:
+        energySelection
+            ? ["10%", "30%", "50%", "75%", "90%", "99%"]
+            : (fixedGlobal
+                ? ["Top 5", "1%", "10%", "30%", "50%", "All"]
+                : ["5", "10", "100", "500", "1k"])
 
     Theme {
         id: theme
@@ -41,8 +54,12 @@ Item {
             .replace(/\B(?=(\d{3})+(?!\d))/g, ",")
     }
 
-    function presetValue(index) {
+    function componentPresetValue(index) {
         const maximum = Math.max(1, spectra.fullFileMaximumComponents)
+        if (!root.fixedGlobal) {
+            const values = [5, 10, 100, 500, 1000]
+            return Math.min(maximum, values[index])
+        }
         switch (index) {
         case 0: return Math.min(5, maximum)
         case 1: return Math.max(1, Math.round(maximum * 0.01))
@@ -51,6 +68,58 @@ Item {
         case 4: return Math.max(1, Math.round(maximum * 0.50))
         default: return maximum
         }
+    }
+
+    function energyPresetValue(index) {
+        return [0.10, 0.30, 0.50, 0.75, 0.90, 0.99][index]
+    }
+
+    function presetSelected(index) {
+        if (root.energySelection) {
+            return Math.abs(
+                spectra.fullFileEnergyTarget
+                    - root.energyPresetValue(index)) < 0.0001
+        }
+        return spectra.fullFileSelectedComponents
+            === root.componentPresetValue(index)
+    }
+
+    function applyPreset(index) {
+        if (root.energySelection)
+            spectra.setFullFileEnergyTarget(
+                root.energyPresetValue(index))
+        else
+            spectra.setFullFileComponentCount(
+                root.componentPresetValue(index))
+    }
+
+    function applyExactValue() {
+        const parsed = Number(exactValue.text)
+        if (!Number.isFinite(parsed)) {
+            exactValue.sync()
+            return
+        }
+        if (root.energySelection)
+            spectra.setFullFileEnergyTarget(parsed / 100)
+        else
+            spectra.setFullFileComponentCount(Math.round(parsed))
+        exactValue.sync()
+    }
+
+    function selectModel(index) {
+        if (index === 2)
+            spectra.setFullFileMode(1)
+        else
+            spectra.setFullFileChannelMode(index)
+    }
+
+    function formatMemory(bytes) {
+        if (bytes <= 0)
+            return "—"
+        const megabytes = bytes / (1024 * 1024)
+        if (megabytes >= 1024)
+            return (megabytes / 1024).toFixed(1) + " GB"
+        return Math.round(megabytes) + " MB"
     }
 
     ScrollView {
@@ -131,13 +200,17 @@ Item {
                         spacing: theme.space1
 
                         Repeater {
-                            model: ["Global FFT", "Time-varying STFT"]
+                            model: ["Mono FFT", "Stereo FFT", "STFT"]
 
                             Rectangle {
                                 required property int index
                                 required property string modelData
 
-                                readonly property bool selected: spectra.fullFileMode === index
+                                readonly property bool selected:
+                                    root.selectedModel === index
+                                readonly property bool available:
+                                    index !== 1
+                                        || spectra.sourceChannels > 1
 
                                 Layout.fillWidth: true
                                 implicitHeight: 40
@@ -149,7 +222,8 @@ Item {
                                 border.color: selected
                                     ? theme.accent
                                     : (segmentHover.hovered ? theme.hoverBorder : theme.border)
-                                opacity: spectra.sourceLoaded ? 1 : 0.55
+                                opacity: spectra.sourceLoaded && available
+                                    ? 1 : 0.45
 
                                 Text {
                                     anchors.centerIn: parent
@@ -162,12 +236,54 @@ Item {
 
                                 HoverHandler {
                                     id: segmentHover
-                                    enabled: spectra.sourceLoaded && !spectra.fullFileProcessing
+                                    enabled: spectra.sourceLoaded
+                                        && available
+                                        && !spectra.fullFileProcessing
                                 }
 
                                 TapHandler {
-                                    enabled: spectra.sourceLoaded && !spectra.fullFileProcessing
-                                    onTapped: spectra.setFullFileMode(index)
+                                    enabled: spectra.sourceLoaded
+                                        && available
+                                        && !spectra.fullFileProcessing
+                                    onTapped: root.selectModel(index)
+                                }
+                            }
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: theme.space1
+                        visible: root.fixedGlobal
+
+                        Text {
+                            text: "Keep by"
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(11)
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: theme.space1
+
+                            Repeater {
+                                model: ["FFT bins", "Spectral energy"]
+
+                                AppButton {
+                                    required property int index
+                                    required property string modelData
+
+                                    Layout.fillWidth: true
+                                    text: modelData
+                                    enabled: spectra.sourceLoaded
+                                        && !spectra.fullFileProcessing
+                                    quiet:
+                                        spectra.fullFileSelectionMode
+                                            !== index
+                                    onClicked:
+                                        spectra.setFullFileSelectionMode(
+                                            index)
                                 }
                             }
                         }
@@ -212,9 +328,11 @@ Item {
                         Layout.fillWidth: true
                         visible: spectra.sourceLoaded
                         enabled: spectra.sourceLoaded
-                        title: spectra.fullFileMode === 0
-                            ? "Whole-file FFT playback"
-                            : "Time-varying STFT playback"
+                        title: root.fixedGlobal
+                            ? (spectra.fullFileChannelMode === 1
+                                ? "Stereo whole-file FFT"
+                                : "Mono whole-file FFT")
+                            : "Time-varying STFT"
                         playing: spectra.fullFilePlaying
                         position: spectra.playbackPosition
                         duration: spectra.playbackDuration > 0
@@ -240,9 +358,11 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: spectra.fullFileMode === 0
-                                    ? "Strongest FFT components"
-                                    : "Components per frame"
+                                text: root.energySelection
+                                    ? "Retained spectral energy"
+                                    : (root.fixedGlobal
+                                        ? "Strongest FFT components"
+                                        : "Components per frame / channel")
                                 color: theme.text
                                 font.family: theme.headingFamily
                                 font.pixelSize: theme.fontSize(13)
@@ -251,8 +371,14 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: root.groupedCount(spectra.fullFileSelectedComponents)
-                                    + " / " + root.groupedCount(spectra.fullFileMaximumComponents)
+                                text: root.energySelection
+                                    ? (spectra.fullFileEnergyTarget * 100)
+                                        .toFixed(2) + "%"
+                                    : root.groupedCount(
+                                        spectra.fullFileSelectedComponents)
+                                        + " / "
+                                        + root.groupedCount(
+                                            spectra.fullFileMaximumComponents)
                                 color: theme.muted
                                 font.family: theme.bodyFamily
                                 font.pixelSize: theme.fontSize(11)
@@ -263,6 +389,7 @@ Item {
                         Slider {
                             id: componentSlider
                             Layout.fillWidth: true
+                            visible: !root.energySelection
                             enabled: spectra.sourceLoaded
                                 && spectra.fullFileMaximumComponents > 0
                                 && !spectra.fullFileProcessing
@@ -273,11 +400,105 @@ Item {
                             onMoved: spectra.setFullFileComponentCount(Math.round(value))
                         }
 
+                        Slider {
+                            Layout.fillWidth: true
+                            visible: root.energySelection
+                            enabled: spectra.sourceLoaded
+                                && !spectra.fullFileProcessing
+                            from: 0.0001
+                            to: 1
+                            stepSize: 0.0001
+                            value: spectra.fullFileEnergyTarget
+                            onMoved:
+                                spectra.setFullFileEnergyTarget(value)
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: theme.space1
+
+                            TextField {
+                                id: exactValue
+
+                                Layout.fillWidth: true
+                                implicitHeight: 40
+                                enabled: spectra.sourceLoaded
+                                    && !spectra.fullFileProcessing
+                                color: theme.text
+                                selectionColor: theme.accent
+                                selectedTextColor: theme.text
+                                font.family: theme.bodyFamily
+                                font.pixelSize: theme.fontSize(11)
+                                horizontalAlignment: Text.AlignRight
+                                selectByMouse: true
+                                inputMethodHints:
+                                    Qt.ImhFormattedNumbersOnly
+                                placeholderText: root.energySelection
+                                    ? "Energy target"
+                                    : "Component count"
+                                placeholderTextColor: theme.quiet
+                                leftPadding: theme.space1
+                                rightPadding: theme.space1
+
+                                function sync() {
+                                    text = root.energySelection
+                                        ? (spectra.fullFileEnergyTarget
+                                            * 100).toFixed(2)
+                                        : String(
+                                            spectra.fullFileSelectedComponents)
+                                }
+
+                                background: Rectangle {
+                                    radius: 4
+                                    color: theme.canvas
+                                    border.width: 1
+                                    border.color: exactValue.activeFocus
+                                        ? theme.accent
+                                        : theme.border
+                                }
+
+                                onAccepted: root.applyExactValue()
+                                onActiveFocusChanged: {
+                                    if (!activeFocus)
+                                        sync()
+                                }
+                                Component.onCompleted: sync()
+
+                                Connections {
+                                    target: spectra
+
+                                    function onFullFileChanged() {
+                                        if (!exactValue.activeFocus)
+                                            exactValue.sync()
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: root.energySelection
+                                    ? "%"
+                                    : "bins"
+                                color: theme.muted
+                                font.family: theme.bodyFamily
+                                font.pixelSize: theme.fontSize(11)
+                            }
+
+                            AppButton {
+                                text: "Apply"
+                                quiet: true
+                                enabled: exactValue.enabled
+                                    && exactValue.text.length > 0
+                                onClicked: root.applyExactValue()
+                            }
+                        }
+
                         Text {
                             Layout.fillWidth: true
-                            text: spectra.fullFileMode === 0
-                                ? "Selected from the one-sided whole-file transform."
-                                : "Selected independently in each overlapping frame."
+                            text: root.energySelection
+                                ? "The smallest ranked-bin set meeting this target is used for every output channel."
+                                : (root.fixedGlobal
+                                    ? "Selected from the one-sided, zero-padded whole-file transform."
+                                    : "Selected independently in each overlapping frame and source channel.")
                             color: theme.muted
                             font.family: theme.bodyFamily
                             font.pixelSize: theme.fontSize(11)
@@ -304,7 +525,7 @@ Item {
                             rowSpacing: theme.space1
 
                             Repeater {
-                                model: ["Top 5", "1%", "10%", "30%", "50%", "All"]
+                                model: root.reconstructionPresets
 
                                 AppButton {
                                     required property int index
@@ -315,11 +536,39 @@ Item {
                                     enabled: spectra.sourceLoaded
                                         && spectra.fullFileMaximumComponents > 0
                                         && !spectra.fullFileProcessing
-                                    quiet: spectra.fullFileSelectedComponents !== root.presetValue(index)
-                                    onClicked: spectra.setFullFileComponentCount(root.presetValue(index))
+                                    quiet: !root.presetSelected(index)
+                                    onClicked: root.applyPreset(index)
                                 }
                             }
                         }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: root.fixedGlobal && spectra.sourceLoaded
+                        text: (spectra.fullFileChannelMode === 1
+                                ? "Stereo estimate "
+                                    + root.formatMemory(
+                                        spectra.fullFileEstimatedSourceBytes)
+                                : "Mono estimate "
+                                    + root.formatMemory(
+                                        spectra.fullFileEstimatedMonoBytes))
+                            + "  |  Limit "
+                            + root.formatMemory(
+                                spectra.fullFileMemoryLimitBytes)
+                        color: {
+                            const estimate =
+                                spectra.fullFileChannelMode === 1
+                                    ? spectra.fullFileEstimatedSourceBytes
+                                    : spectra.fullFileEstimatedMonoBytes
+                            return estimate
+                                    > spectra.fullFileMemoryLimitBytes
+                                ? theme.warning
+                                : theme.muted
+                        }
+                        font.family: theme.bodyFamily
+                        font.pixelSize: theme.fontSize(10)
+                        wrapMode: Text.Wrap
                     }
 
                     AppButton {
@@ -462,7 +711,11 @@ Item {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: spectra.fullFileMode === 0 ? "Global FFT" : "STFT"
+                                    text: root.fixedGlobal
+                                        ? (spectra.fullFileChannelMode === 1
+                                            ? "Stereo FFT"
+                                            : "Mono FFT")
+                                        : "STFT"
                                     color: theme.text
                                     font.family: theme.headingFamily
                                     font.pixelSize: theme.fontSize(13.5)
@@ -490,7 +743,13 @@ Item {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: root.groupedCount(spectra.fullFileSelectedComponents)
+                                    text: root.energySelection
+                                        ? (spectra.fullFileEnergyTarget * 100)
+                                            .toFixed(2) + "% / "
+                                            + root.groupedCount(
+                                                spectra.fullFileSelectedComponents)
+                                        : root.groupedCount(
+                                            spectra.fullFileSelectedComponents)
                                     color: theme.text
                                     font.family: theme.headingFamily
                                     font.pixelSize: theme.fontSize(13.5)
@@ -510,7 +769,11 @@ Item {
                                 spacing: theme.space1
 
                                 Text {
-                                    text: spectra.fullFileProcessing ? "Progress" : "Retained energy"
+                                    text: spectra.fullFileProcessing
+                                        ? "Progress"
+                                        : (spectra.fullFileReady
+                                            ? "Output"
+                                            : "Retained energy")
                                     color: theme.muted
                                     font.family: theme.bodyFamily
                                     font.pixelSize: theme.fontSize(10.5)
@@ -521,7 +784,12 @@ Item {
                                     text: spectra.fullFileProcessing
                                         ? Math.round(spectra.fullFileProgress * 100) + "%"
                                         : (spectra.fullFileReady
-                                            ? (spectra.fullFileRetainedEnergy * 100).toFixed(1) + "%"
+                                            ? (spectra.fullFileOutputChannels === 2
+                                                ? "Stereo"
+                                                : "Mono")
+                                                + "  |  "
+                                                + (spectra.fullFileRetainedEnergy * 100).toFixed(1)
+                                                + "%"
                                             : "—")
                                     color: spectra.fullFileProcessing ? theme.accent : theme.text
                                     font.family: theme.headingFamily

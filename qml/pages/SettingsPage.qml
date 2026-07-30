@@ -14,6 +14,13 @@ ScrollView {
         id: theme
     }
 
+    function memoryLabel(bytes) {
+        const megabytes = bytes / (1024 * 1024)
+        return megabytes >= 1024
+            ? (megabytes / 1024).toFixed(1) + " GB"
+            : Math.round(megabytes) + " MB"
+    }
+
     GridLayout {
         id: pageLayout
         width: root.availableWidth
@@ -89,6 +96,94 @@ ScrollView {
                         enabled: spectra.textScale < 1.40
                         onClicked: spectra.setTextScale(spectra.textScale + 0.05)
                     }
+                }
+
+                Item {
+                    Layout.fillHeight: true
+                }
+            }
+        }
+
+        Panel {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            title: "Whole-file FFT"
+            subtitle: "Memory ceiling for reusable global models"
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: theme.space2
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Current limit  "
+                        + root.memoryLabel(
+                            spectra.fullFileMemoryLimitBytes)
+                    color: theme.text
+                    font.family: theme.headingFamily
+                    font.pixelSize: theme.fontSize(16)
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Larger limits allow longer stereo FFT models. The estimate is shown before building."
+                    color: theme.muted
+                    font.family: theme.bodyFamily
+                    font.pixelSize: theme.fontSize(12)
+                    wrapMode: Text.Wrap
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 4
+                    columnSpacing: theme.space1
+                    rowSpacing: theme.space1
+
+                    Repeater {
+                        model: [
+                            {
+                                "label": "512 MB",
+                                "bytes": 512 * 1024 * 1024
+                            },
+                            {
+                                "label": "768 MB",
+                                "bytes": 768 * 1024 * 1024
+                            },
+                            {
+                                "label": "1 GB",
+                                "bytes": 1024 * 1024 * 1024
+                            },
+                            {
+                                "label": "1.5 GB",
+                                "bytes": 1536 * 1024 * 1024
+                            }
+                        ]
+
+                        AppButton {
+                            required property var modelData
+
+                            Layout.fillWidth: true
+                            text: modelData.label
+                            quiet:
+                                spectra.fullFileMemoryLimitBytes
+                                    !== modelData.bytes
+                            onClicked:
+                                spectra.setFullFileMemoryLimitBytes(
+                                    modelData.bytes)
+                        }
+                    }
+                }
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "Reconstruction cache"
+                    value: spectra.fullFileCacheEntries
+                        + " / 6 entries  |  256 MB"
+                    stateColor: spectra.fullFileCacheEntries > 0
+                        ? theme.success
+                        : theme.quiet
                 }
 
                 Item {
@@ -184,6 +279,50 @@ ScrollView {
                             + (spectra.sourceChannels === 1 ? " (mono)" : " (stereo)")
                         : "—"
                     stateColor: spectra.sourceLoaded ? theme.success : theme.quiet
+                }
+
+                Item {
+                    Layout.fillHeight: true
+                }
+            }
+        }
+
+        Panel {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            title: "Analysis defaults"
+            subtitle: "FFT and pitch-detection parameters"
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: theme.space1
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "FFT size"
+                    value: "16,384 samples"
+                }
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "Window"
+                    value: "Hann"
+                }
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "Pitch range"
+                    value: "40–1,200 Hz"
+                }
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "Peak threshold"
+                    value: "−55 dB"
                 }
 
                 Item {

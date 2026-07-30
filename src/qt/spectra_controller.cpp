@@ -35,9 +35,10 @@ constexpr unsigned int kSpectrogramTimeBins = 256U;
 constexpr unsigned int kSpectrogramFrequencyBins = 128U;
 constexpr float kSpectrogramMaximumFrequency = 12000.0f;
 constexpr double kFullFileMaximumDuration = 600.0;
-constexpr size_t kFullFileMemoryLimit = 768U * 1024U * 1024U;
 constexpr size_t kGlobalOperationsPerTick = 65536U;
 constexpr size_t kStftFramesPerTick = 16U;
+constexpr size_t kReconstructionCacheLimit =
+    256U * 1024U * 1024U;
 constexpr ADSREnvelope kDefaultEnvelope = {0.015f, 0.08f, 0.75f, 0.12f};
 
 const char *const kPresetNames[] = {
@@ -89,6 +90,9 @@ SpectraController::SpectraController(QObject *parent)
     stft_reconstruction_job_init(&spectrogramJob_);
     stft_reconstruction_job_init(&fullFileStftJob_);
     stft_reconstruction_job_init(&fullFileStftJobRight_);
+    reconstruction_cache_init(
+        &reconstructionCache_,
+        kReconstructionCacheLimit);
     imported_audio_init(&importedAudio_);
 
     InitAudioDevice();
@@ -123,6 +127,7 @@ SpectraController::~SpectraController() {
     fullFileTimer_.stop();
     audio_clip_unload(&fullFileClip_);
     interleaved_buffer_free(&fullFileBuffer_);
+    reconstruction_cache_free(&reconstructionCache_);
     stft_reconstruction_job_free(&fullFileStftJobRight_);
     stft_reconstruction_job_free(&fullFileStftJob_);
     global_fourier_job_free(&globalFourierJobRight_);
@@ -198,8 +203,20 @@ QVariantList SpectraController::synthWaveform() const {
     return synthWaveform_;
 }
 
+QVariantList SpectraController::synthWaveformMinimums() const {
+    return synthWaveformMinimums_;
+}
+
+QVariantList SpectraController::synthWaveformMaximums() const {
+    return synthWaveformMaximums_;
+}
+
 QVariantList SpectraController::synthSpectrum() const {
     return synthSpectrum_;
+}
+
+QVariantList SpectraController::synthPeaks() const {
+    return synthPeaks_;
 }
 
 QString SpectraController::synthPitch() const {
@@ -290,6 +307,10 @@ QVariantList SpectraController::analysisPeaks() const {
     return analysisPeaks_;
 }
 
+int SpectraController::analysisPeakReadoutMode() const {
+    return analysisPeakReadoutMode_;
+}
+
 QString SpectraController::analysisPitch() const {
     if (!analysisPitchEstimate_.valid) {
         return QStringLiteral("No stable pitch");
@@ -353,6 +374,45 @@ int SpectraController::fourierSelectedComponents() const {
     return fourierSelectedComponents_;
 }
 
+int SpectraController::fourierFftSize() const {
+    return static_cast<int>(fourierAnalysis_.fft_size);
+}
+
+double SpectraController::fourierFrameDuration() const {
+    if (fourierAnalysis_.windowed_frame.sample_rate == 0U) {
+        return 0.0;
+    }
+    return static_cast<double>(
+               fourierAnalysis_.windowed_frame.count) /
+        static_cast<double>(
+               fourierAnalysis_.windowed_frame.sample_rate);
+}
+
+QVariantList SpectraController::fourierComponents() const {
+    QVariantList components;
+    if (fourierAnalysis_.ranked_components == nullptr) {
+        return components;
+    }
+    const int count = std::min(
+        {8,
+         fourierSelectedComponents_,
+         static_cast<int>(fourierAnalysis_.component_count)});
+    components.reserve(count);
+    for (int index = 0; index < count; ++index) {
+        const FourierComponent &source =
+            fourierAnalysis_.ranked_components[index];
+        QVariantMap component;
+        component.insert(QStringLiteral("rank"), index + 1);
+        component.insert(
+            QStringLiteral("frequency"),
+            source.frequency);
+        component.insert(QStringLiteral("db"), source.db);
+        component.insert(QStringLiteral("phase"), source.phase);
+        components.append(component);
+    }
+    return components;
+}
+
 bool SpectraController::harmonicPlaying() const {
     return audio_clip_is_playing(&harmonicClip_);
 }
@@ -363,6 +423,21 @@ bool SpectraController::framePlaying() const {
 
 bool SpectraController::fourierPlaying() const {
     return audio_clip_is_playing(&fourierClip_);
+}
+
+QString SpectraController::labPlaybackTitle() const {
+    switch (lastLabPlaybackTarget_) {
+        case HarmonicPlayback:
+            return QStringLiteral("Integer-harmonic resynthesis");
+        case OriginalFramePlayback:
+            return QStringLiteral("Original windowed FFT frame");
+        case FourierFramePlayback:
+            return QStringLiteral("Top-%1 Fourier frame")
+                .arg(fourierSelectedComponents_);
+        case RegionPlayback:
+        default:
+            return QStringLiteral("Original selected region");
+    }
 }
 
 bool SpectraController::fullFileProcessing() const {
@@ -376,6 +451,69 @@ bool SpectraController::fullFileReady() const {
 
 int SpectraController::fullFileMode() const {
     return fullFileMode_;
+}
+
+int SpectraController::fullFileChannelMode() const {
+    return fullFileChannelMode_;
+}
+
+int SpectraController::fullFileSelectionMode() const {
+    return fullFileSelectionMode_;
+}
+
+double SpectraController::fullFileEnergyTarget() const {
+    return fullFileEnergyTarget_;
+}
+
+qulonglong SpectraController::fullFileEstimatedMonoBytes() const {
+    if (!sourceLoaded()) {
+        return 0;
+    }
+    const int maximum =
+        global_fourier_available_component_count(
+            importedAudio_.mono.count);
+    return maximum > 0
+        ? static_cast<qulonglong>(
+              global_fourier_estimated_multichannel_analysis_bytes(
+                  importedAudio_.mono.count,
+                  maximum,
+                  1U))
+        : 0;
+}
+
+qulonglong SpectraController::fullFileEstimatedSourceBytes() const {
+    if (!sourceLoaded()) {
+        return 0;
+    }
+    const int maximum =
+        global_fourier_available_component_count(
+            importedAudio_.mono.count);
+    const unsigned int channels =
+        importedAudio_.source_channels == 2U &&
+                importedAudio_.interleaved.channel_count == 2U
+            ? 2U
+            : 1U;
+    return maximum > 0
+        ? static_cast<qulonglong>(
+              global_fourier_estimated_multichannel_analysis_bytes(
+                  importedAudio_.mono.count,
+                  maximum,
+                  channels))
+        : 0;
+}
+
+qulonglong SpectraController::fullFileMemoryLimitBytes() const {
+    return fullFileMemoryLimitBytes_;
+}
+
+int SpectraController::fullFileCacheEntries() const {
+    return static_cast<int>(
+        reconstruction_cache_entry_count(
+            &reconstructionCache_));
+}
+
+int SpectraController::fullFileOutputChannels() const {
+    return static_cast<int>(fullFileBuffer_.channel_count);
 }
 
 double SpectraController::fullFileProgress() const {
@@ -619,6 +757,23 @@ void SpectraController::setRegionDuration(double duration) {
     resetAnalysis();
 }
 
+void SpectraController::setAnalysisPeakReadoutMode(int mode) {
+    const int bounded = mode == 1 ? 1 : 0;
+    if (bounded == analysisPeakReadoutMode_) {
+        return;
+    }
+    analysisPeakReadoutMode_ = bounded;
+    if (analysisReady_) {
+        rebuildAnalysisPeaks();
+        rebuildAnalysisVisualization();
+    }
+    setStatusText(
+        analysisPeakReadoutMode_ == 0
+            ? QStringLiteral("Showing interpolated spectral peaks")
+            : QStringLiteral("Showing raw FFT-bin peaks"));
+    emit analysisChanged();
+}
+
 void SpectraController::analyzeRegion() {
     SampleBuffer region = selectedRegion();
     if (region.samples == nullptr || region.count == 0U) {
@@ -646,13 +801,7 @@ void SpectraController::analyzeRegion() {
     const float maximumFrequency = std::min(
         20000.0f,
         static_cast<float>(region.sample_rate) * 0.5f);
-    analysisPeakCount_ = find_interpolated_peaks(
-        &analysisSpectrumBuffer_,
-        20.0f,
-        maximumFrequency,
-        -55.0f,
-        analysisPeaksBuffer_,
-        64);
+    rebuildAnalysisPeaks();
     analysisPitchEstimate_ = estimate_pitch(
         &region,
         50.0f,
@@ -680,6 +829,7 @@ void SpectraController::playRegion() {
     haltAllAudio();
     if (audio_clip_play(&regionClip_)) {
         playbackTarget_ = RegionPlayback;
+        lastLabPlaybackTarget_ = RegionPlayback;
         setStatusText(QStringLiteral("Playing analyzed region"));
         emit playbackChanged();
     }
@@ -706,6 +856,7 @@ void SpectraController::playHarmonicModel() {
     haltAllAudio();
     if (audio_clip_play(&harmonicClip_)) {
         playbackTarget_ = HarmonicPlayback;
+        lastLabPlaybackTarget_ = HarmonicPlayback;
         setStatusText(QStringLiteral("Playing integer-harmonic resynthesis"));
         emit playbackChanged();
     }
@@ -718,6 +869,7 @@ void SpectraController::playOriginalFrame() {
     haltAllAudio();
     if (audio_clip_play(&originalFrameClip_)) {
         playbackTarget_ = OriginalFramePlayback;
+        lastLabPlaybackTarget_ = OriginalFramePlayback;
         setStatusText(QStringLiteral("Playing original windowed FFT frame"));
         emit playbackChanged();
     }
@@ -730,9 +882,58 @@ void SpectraController::playFourierFrame() {
     haltAllAudio();
     if (audio_clip_play(&fourierClip_)) {
         playbackTarget_ = FourierFramePlayback;
+        lastLabPlaybackTarget_ = FourierFramePlayback;
         setStatusText(QStringLiteral("Playing Top-%1 Fourier frame")
                           .arg(fourierSelectedComponents_));
         emit playbackChanged();
+    }
+}
+
+void SpectraController::toggleLabPlayback() {
+    AudioClip *clip = nullptr;
+    switch (lastLabPlaybackTarget_) {
+        case HarmonicPlayback:
+            clip = &harmonicClip_;
+            break;
+        case OriginalFramePlayback:
+            clip = &originalFrameClip_;
+            break;
+        case FourierFramePlayback:
+            clip = &fourierClip_;
+            break;
+        case RegionPlayback:
+        default:
+            clip = &regionClip_;
+            break;
+    }
+    if (audio_clip_is_playing(clip)) {
+        playbackTarget_ = lastLabPlaybackTarget_;
+        audio_clip_pause(clip);
+        setStatusText(QStringLiteral("Reconstruction playback paused"));
+        emit playbackChanged();
+        return;
+    }
+    if (audio_clip_is_paused(clip)) {
+        playbackTarget_ = lastLabPlaybackTarget_;
+        audio_clip_resume(clip);
+        setStatusText(QStringLiteral("Reconstruction playback resumed"));
+        emit playbackChanged();
+        return;
+    }
+    switch (lastLabPlaybackTarget_) {
+        case HarmonicPlayback:
+            playHarmonicModel();
+            break;
+        case OriginalFramePlayback:
+            playOriginalFrame();
+            break;
+        case FourierFramePlayback:
+            playFourierFrame();
+            break;
+        case RegionPlayback:
+        default:
+            playRegion();
+            break;
     }
 }
 
@@ -783,6 +984,7 @@ void SpectraController::setFullFileMode(int mode) {
         return;
     }
 
+    cacheFullFileOutput();
     fullFileTimer_.stop();
     if (fullFileWork_ == SpectrogramBuild) {
         stft_reconstruction_job_free(&spectrogramJob_);
@@ -802,29 +1004,194 @@ void SpectraController::setFullFileMode(int mode) {
     fullFileWork_ = FullFileIdle;
     clearFullFileOutput();
     fullFileMode_ = bounded;
-    fullFileSelectedComponents_ =
-        fullFileMode_ == 0 ? globalSelectedComponents_ : stftSelectedComponents_;
+    if (fullFileMode_ == 0) {
+        fullFileSelectedComponents_ = globalSelectedComponents_;
+        if (fullFileSelectionMode_ == 1 &&
+            globalFourierJob_.analysis_ready) {
+            int resolved =
+                global_fourier_job_component_count_for_energy(
+                    &globalFourierJob_,
+                    static_cast<float>(fullFileEnergyTarget_));
+            if (fullFileChannelMode_ == 1 &&
+                globalFourierJobRight_.analysis_ready) {
+                resolved = std::max(
+                    resolved,
+                    global_fourier_job_component_count_for_energy(
+                        &globalFourierJobRight_,
+                        static_cast<float>(
+                            fullFileEnergyTarget_)));
+            }
+            if (resolved > 0) {
+                fullFileSelectedComponents_ = resolved;
+            }
+        }
+    } else {
+        fullFileSelectedComponents_ = stftSelectedComponents_;
+    }
     fullFileProgress_ = 0.0;
     setStatusText(
         fullFileMode_ == 0
             ? QStringLiteral("Whole-file model set to fixed global FFT")
             : QStringLiteral("Whole-file model set to time-varying STFT"));
     emit fullFileChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::setFullFileChannelMode(int mode) {
+    int bounded = mode == 1 ? 1 : 0;
+    if (sourceChannels() < 2) {
+        bounded = 0;
+    }
+    if (fullFileMode_ != 0) {
+        setFullFileMode(0);
+    }
+    if (bounded == fullFileChannelMode_) {
+        return;
+    }
+    if (fullFileProcessing()) {
+        return;
+    }
+
+    haltAllAudio();
+    cacheFullFileOutput();
+    global_fourier_job_free(&globalFourierJob_);
+    global_fourier_job_init(&globalFourierJob_);
+    global_fourier_job_free(&globalFourierJobRight_);
+    global_fourier_job_init(&globalFourierJobRight_);
+    clearFullFileOutput();
+    fullFileChannelMode_ = bounded;
+    fullFileProgress_ = 0.0;
+    setStatusText(
+        fullFileChannelMode_ == 1
+            ? QStringLiteral("Whole-file FFT set to source channels")
+            : QStringLiteral("Whole-file FFT set to mono"));
+    emit fullFileChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::setFullFileSelectionMode(int mode) {
+    const int bounded = mode == 1 ? 1 : 0;
+    if (fullFileMode_ != 0) {
+        setFullFileMode(0);
+    }
+    if (bounded == fullFileSelectionMode_) {
+        return;
+    }
+    if (fullFileProcessing()) {
+        return;
+    }
+    cacheFullFileOutput();
+    clearFullFileOutput();
+    fullFileSelectionMode_ = bounded;
+    if (fullFileSelectionMode_ == 0) {
+        fullFileSelectedComponents_ = globalSelectedComponents_;
+    } else if (globalFourierJob_.analysis_ready) {
+        int resolved =
+            global_fourier_job_component_count_for_energy(
+                &globalFourierJob_,
+                static_cast<float>(fullFileEnergyTarget_));
+        if (fullFileChannelMode_ == 1 &&
+            globalFourierJobRight_.analysis_ready) {
+            resolved = std::max(
+                resolved,
+                global_fourier_job_component_count_for_energy(
+                    &globalFourierJobRight_,
+                    static_cast<float>(fullFileEnergyTarget_)));
+        }
+        if (resolved > 0) {
+            fullFileSelectedComponents_ = resolved;
+        }
+    }
+    setStatusText(
+        fullFileSelectionMode_ == 1
+            ? QStringLiteral("Global FFT selection set to spectral energy")
+            : QStringLiteral("Global FFT selection set to ranked bins"));
+    emit fullFileChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::setFullFileEnergyTarget(double target) {
+    const double bounded = clampValue(target, 0.0001, 1.0);
+    if (qFuzzyCompare(bounded, fullFileEnergyTarget_) &&
+        fullFileSelectionMode_ == 1) {
+        return;
+    }
+    if (fullFileProcessing()) {
+        return;
+    }
+    fullFileEnergyTarget_ = bounded;
+    if (fullFileMode_ != 0) {
+        setFullFileMode(0);
+    }
+    cacheFullFileOutput();
+    clearFullFileOutput();
+    fullFileSelectionMode_ = 1;
+    if (globalFourierJob_.analysis_ready) {
+        int resolved =
+            global_fourier_job_component_count_for_energy(
+                &globalFourierJob_,
+                static_cast<float>(fullFileEnergyTarget_));
+        if (fullFileChannelMode_ == 1 &&
+            globalFourierJobRight_.analysis_ready) {
+            resolved = std::max(
+                resolved,
+                global_fourier_job_component_count_for_energy(
+                    &globalFourierJobRight_,
+                    static_cast<float>(fullFileEnergyTarget_)));
+        }
+        if (resolved > 0) {
+            fullFileSelectedComponents_ = resolved;
+        }
+    }
+    setStatusText(
+        QStringLiteral("Global FFT energy target set to %1%")
+            .arg(fullFileEnergyTarget_ * 100.0, 0, 'f', 2));
+    emit fullFileChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::setFullFileMemoryLimitBytes(
+    qulonglong bytes) {
+    constexpr qulonglong minimum =
+        128ULL * 1024ULL * 1024ULL;
+    constexpr qulonglong maximum =
+        4ULL * 1024ULL * 1024ULL * 1024ULL;
+    const qulonglong bounded =
+        std::max(minimum, std::min(bytes, maximum));
+    if (bounded == fullFileMemoryLimitBytes_) {
+        return;
+    }
+    fullFileMemoryLimitBytes_ = bounded;
+    setStatusText(
+        QStringLiteral("Whole-file FFT memory limit set to %1 MB")
+            .arg(static_cast<double>(bounded) /
+                (1024.0 * 1024.0), 0, 'f', 0));
+    emit fullFileChanged();
 }
 
 void SpectraController::setFullFileComponentCount(int componentCount) {
-    const int maximum = fullFileMaximumComponents();
-    const int bounded = std::max(1, std::min(componentCount, maximum));
-    if (bounded == fullFileSelectedComponents_) {
+    if (fullFileProcessing()) {
         return;
     }
+    const int maximum = fullFileMaximumComponents();
+    const int bounded = std::max(1, std::min(componentCount, maximum));
+    const bool switchesGlobalSelection =
+        fullFileMode_ == 0 && fullFileSelectionMode_ != 0;
+    if (bounded == fullFileSelectedComponents_ &&
+        !switchesGlobalSelection) {
+        return;
+    }
+    cacheFullFileOutput();
+    clearFullFileOutput();
     fullFileSelectedComponents_ = bounded;
     if (fullFileMode_ == 0) {
+        fullFileSelectionMode_ = 0;
         globalSelectedComponents_ = bounded;
     } else {
         stftSelectedComponents_ = bounded;
     }
     emit fullFileChanged();
+    emit playbackChanged();
 }
 
 void SpectraController::buildFullFileModel() {
@@ -842,6 +1209,11 @@ void SpectraController::buildFullFileModel() {
 
     clearFullFileOutput();
     fullFileProgress_ = 0.0;
+    if (restoreFullFileOutput()) {
+        emit fullFileChanged();
+        emit playbackChanged();
+        return;
+    }
     const bool started =
         fullFileMode_ == 0
             ? (globalFourierJob_.analysis_ready
@@ -980,6 +1352,20 @@ void SpectraController::importAudioFile(const QUrl &url) {
     sourceFileName_ = QFileInfo(localPath).fileName();
     regionDuration_ = std::min(1.0, sourceDuration());
     regionStart_ = std::max(0.0, (sourceDuration() - regionDuration_) * 0.5);
+    const int availableGlobalComponents =
+        global_fourier_available_component_count(
+            importedAudio_.mono.count);
+    if (availableGlobalComponents > 0) {
+        const unsigned int recommendedChannels =
+            global_fourier_recommended_channel_count(
+                importedAudio_.mono.count,
+                availableGlobalComponents,
+                importedAudio_.source_channels,
+                static_cast<size_t>(
+                    fullFileMemoryLimitBytes_));
+        fullFileChannelMode_ =
+            recommendedChannels > 1U ? 1 : 0;
+    }
     rebuildSourceWaveform();
     setStatusText(QStringLiteral("Loaded %1").arg(sourceFileName_));
     emit sourceChanged();
@@ -1039,13 +1425,12 @@ void SpectraController::rebuildSynth() {
         synthBuffer_.samples,
         synthBuffer_.count,
         synthBuffer_.sample_rate);
-    Peak peaks[kMaximumPeaks] = {};
     synthPeakCount_ = find_peaks(
         &synthSpectrumBuffer_,
         20.0f,
         8000.0f,
         -55.0f,
-        peaks,
+        synthPeaksBuffer_,
         kMaximumPeaks);
     synthPitchEstimate_ = estimate_pitch(&synthBuffer_, 40.0f, 1200.0f);
     if (audioReady_) {
@@ -1061,16 +1446,25 @@ void SpectraController::rebuildSynth() {
 
 void SpectraController::rebuildSynthVisualization() {
     synthWaveform_.clear();
+    synthWaveformMinimums_.clear();
+    synthWaveformMaximums_.clear();
     if (synthBuffer_.samples != nullptr && synthBuffer_.count > 0U) {
         synthWaveform_.reserve(kWaveformPoints);
+        synthWaveformMinimums_.reserve(kWaveformPoints);
+        synthWaveformMaximums_.reserve(kWaveformPoints);
         for (int point = 0; point < kWaveformPoints; ++point) {
             const size_t begin = static_cast<size_t>(point) * synthBuffer_.count / kWaveformPoints;
             const size_t end = static_cast<size_t>(point + 1) * synthBuffer_.count / kWaveformPoints;
-            float maximum = 0.0f;
+            float minimum = 1.0f;
+            float maximum = -1.0f;
             for (size_t sample = begin; sample < std::max(begin + 1U, end); ++sample) {
-                maximum = std::max(maximum, std::fabs(synthBuffer_.samples[sample]));
+                minimum = std::min(minimum, synthBuffer_.samples[sample]);
+                maximum = std::max(maximum, synthBuffer_.samples[sample]);
             }
-            synthWaveform_.append(maximum);
+            synthWaveform_.append(
+                std::max(std::fabs(minimum), std::fabs(maximum)));
+            synthWaveformMinimums_.append(minimum);
+            synthWaveformMaximums_.append(maximum);
         }
     }
 
@@ -1087,6 +1481,22 @@ void SpectraController::rebuildSynthVisualization() {
             const float decibels = 20.0f * std::log10(std::max(magnitude, 0.00001f));
             synthSpectrum_.append(std::max(-80.0f, std::min(0.0f, decibels)));
         }
+    }
+
+    synthPeaks_.clear();
+    synthPeaks_.reserve(synthPeakCount_);
+    for (int index = 0; index < synthPeakCount_; ++index) {
+        QVariantMap peak;
+        peak.insert(
+            QStringLiteral("frequency"),
+            synthPeaksBuffer_[index].frequency);
+        peak.insert(
+            QStringLiteral("magnitude"),
+            synthPeaksBuffer_[index].magnitude);
+        peak.insert(
+            QStringLiteral("db"),
+            synthPeaksBuffer_[index].db);
+        synthPeaks_.append(peak);
     }
 }
 
@@ -1111,6 +1521,32 @@ void SpectraController::rebuildSourceWaveform() {
         sourceWaveformMinimums_.append(minimums[index]);
         sourceWaveformMaximums_.append(maximums[index]);
     }
+}
+
+void SpectraController::rebuildAnalysisPeaks() {
+    analysisPeakCount_ = 0;
+    if (analysisSpectrumBuffer_.count == 0U) {
+        return;
+    }
+    const float maximumFrequency = std::min(
+        20000.0f,
+        static_cast<float>(sourceSampleRate()) * 0.5f);
+    analysisPeakCount_ =
+        analysisPeakReadoutMode_ == 0
+            ? find_interpolated_peaks(
+                  &analysisSpectrumBuffer_,
+                  20.0f,
+                  maximumFrequency,
+                  -55.0f,
+                  analysisPeaksBuffer_,
+                  64)
+            : find_peaks(
+                  &analysisSpectrumBuffer_,
+                  20.0f,
+                  maximumFrequency,
+                  -55.0f,
+                  analysisPeaksBuffer_,
+                  64);
 }
 
 void SpectraController::rebuildAnalysisVisualization() {
@@ -1302,11 +1738,96 @@ void SpectraController::resetFullFile() {
     stft_reconstruction_job_free(&spectrogramJob_);
     stft_reconstruction_job_init(&spectrogramJob_);
     clearFullFileOutput();
+    reconstruction_cache_free(&reconstructionCache_);
+    reconstruction_cache_init(
+        &reconstructionCache_,
+        kReconstructionCacheLimit);
+    fullFileMode_ = 0;
+    fullFileChannelMode_ = 0;
+    fullFileSelectionMode_ = 0;
+    fullFileEnergyTarget_ = 0.90;
+    globalSelectedComponents_ = 5;
+    stftSelectedComponents_ = 100;
+    fullFileSelectedComponents_ = globalSelectedComponents_;
     fullFileProgress_ = 0.0;
     fullFileRetainedEnergy_ = 0.0;
     fullFileFrameCount_ = 0;
     spectrogramImageUrl_ = QUrl();
     emit fullFileChanged();
+}
+
+void SpectraController::cacheFullFileOutput() {
+    if (!fullFileReady() ||
+        fullFileSelectedComponents_ <= 0) {
+        return;
+    }
+    if (playbackTarget_ == FullFilePlayback) {
+        playbackTarget_ = NoPlayback;
+    }
+    audio_clip_unload(&fullFileClip_);
+    audio_clip_init(&fullFileClip_);
+    const ReconstructionCacheKey key = {
+        fullFileMode_ == 0
+            ? RECONSTRUCTION_CACHE_GLOBAL
+            : RECONSTRUCTION_CACHE_STFT,
+        fullFileSelectedComponents_,
+        fullFileBuffer_.channel_count,
+    };
+    if (!reconstruction_cache_store_move(
+            &reconstructionCache_,
+            key,
+            &fullFileBuffer_,
+            static_cast<float>(
+                fullFileRetainedEnergy_))) {
+        interleaved_buffer_free(&fullFileBuffer_);
+    }
+    fullFileRetainedEnergy_ = 0.0;
+    fullFileProgress_ = 0.0;
+}
+
+bool SpectraController::restoreFullFileOutput() {
+    const ReconstructionCacheKey key = {
+        fullFileMode_ == 0
+            ? RECONSTRUCTION_CACHE_GLOBAL
+            : RECONSTRUCTION_CACHE_STFT,
+        fullFileSelectedComponents_,
+        fullFileReconstructionChannels(),
+    };
+    float retainedEnergy = 0.0f;
+    if (!reconstruction_cache_take(
+            &reconstructionCache_,
+            key,
+            &fullFileBuffer_,
+            &retainedEnergy)) {
+        return false;
+    }
+    fullFileRetainedEnergy_ =
+        clampValue(
+            static_cast<double>(retainedEnergy),
+            0.0,
+            1.0);
+    fullFileProgress_ = 1.0;
+    const bool playbackReady =
+        !audioReady_ ||
+        audio_clip_set_interleaved(
+            &fullFileClip_,
+            &fullFileBuffer_);
+    setStatusText(
+        playbackReady
+            ? QStringLiteral(
+                  "Restored %1 from the reconstruction cache")
+                  .arg(
+                      fullFileMode_ == 0
+                          ? QStringLiteral("%1 FFT bins")
+                                .arg(
+                                    fullFileSelectedComponents_)
+                          : QStringLiteral(
+                                "STFT Top-%1")
+                                .arg(
+                                    fullFileSelectedComponents_))
+            : QStringLiteral(
+                  "Cached reconstruction restored for export; playback is unavailable"));
+    return true;
 }
 
 void SpectraController::clearFullFileOutput() {
@@ -1357,6 +1878,9 @@ void SpectraController::startSpectrogramBuild() {
 }
 
 unsigned int SpectraController::fullFileReconstructionChannels() const {
+    if (fullFileMode_ == 0 && fullFileChannelMode_ == 0) {
+        return 1U;
+    }
     return importedAudio_.source_channels == 2U &&
             importedAudio_.interleaved.channel_count == 2U
         ? 2U
@@ -1376,9 +1900,24 @@ bool SpectraController::startGlobalAnalysis() {
             importedAudio_.mono.count,
             available,
             channelCount,
-            kFullFileMemoryLimit)) {
+            static_cast<size_t>(fullFileMemoryLimitBytes_))) {
+        const double estimatedMegabytes =
+            static_cast<double>(
+                global_fourier_estimated_multichannel_analysis_bytes(
+                    importedAudio_.mono.count,
+                    available,
+                    channelCount)) /
+            (1024.0 * 1024.0);
+        const double limitMegabytes =
+            static_cast<double>(fullFileMemoryLimitBytes_) /
+            (1024.0 * 1024.0);
         setStatusText(
-            QStringLiteral("Whole-file FFT exceeds the 768 MB model limit; use STFT"));
+            QStringLiteral("%1 FFT needs %2 MB, above the %3 MB limit")
+                .arg(channelCount > 1U
+                         ? QStringLiteral("Stereo")
+                         : QStringLiteral("Mono"))
+                .arg(estimatedMegabytes, 0, 'f', 0)
+                .arg(limitMegabytes, 0, 'f', 0));
         return false;
     }
 
@@ -1439,9 +1978,30 @@ bool SpectraController::startGlobalReconstruction() {
         return false;
     }
     const int maximum = std::max(1, globalFourierJob_.maximum_component_count);
+    if (fullFileSelectionMode_ == 1) {
+        int resolved =
+            global_fourier_job_component_count_for_energy(
+                &globalFourierJob_,
+                static_cast<float>(fullFileEnergyTarget_));
+        if (channelCount == 2U) {
+            resolved = std::max(
+                resolved,
+                global_fourier_job_component_count_for_energy(
+                    &globalFourierJobRight_,
+                    static_cast<float>(fullFileEnergyTarget_)));
+        }
+        if (resolved <= 0) {
+            setStatusText(
+                QStringLiteral("Could not resolve the spectral-energy target"));
+            return false;
+        }
+        fullFileSelectedComponents_ = resolved;
+    }
     fullFileSelectedComponents_ =
         std::max(1, std::min(fullFileSelectedComponents_, maximum));
-    globalSelectedComponents_ = fullFileSelectedComponents_;
+    if (fullFileSelectionMode_ == 0) {
+        globalSelectedComponents_ = fullFileSelectedComponents_;
+    }
     bool started = global_fourier_job_begin_reconstruction(
             &globalFourierJob_,
             fullFileSelectedComponents_);
@@ -1461,8 +2021,14 @@ bool SpectraController::startGlobalReconstruction() {
     fullFileProgress_ = 0.0;
     fullFileWork_ = GlobalReconstruction;
     setStatusText(
-        QStringLiteral("Reconstructing the file from %1 ranked FFT bins")
-            .arg(fullFileSelectedComponents_));
+        fullFileSelectionMode_ == 1
+            ? QStringLiteral(
+                  "Targeting %1% energy with %2 ranked FFT bins")
+                  .arg(fullFileEnergyTarget_ * 100.0, 0, 'f', 2)
+                  .arg(fullFileSelectedComponents_)
+            : QStringLiteral(
+                  "Reconstructing the file from %1 ranked FFT bins")
+                  .arg(fullFileSelectedComponents_));
     fullFileTimer_.start();
     emit fullFileChanged();
     return true;
@@ -1797,11 +2363,34 @@ void SpectraController::finishFullFileReconstruction(
     setStatusText(
         fullFileReady()
             ? (playbackReady
-                   ? QStringLiteral("%1 reconstruction ready; %2% retained energy")
-                         .arg(fullFileMode_ == 0
-                                  ? QStringLiteral("Global FFT")
-                                  : QStringLiteral("STFT"))
-                         .arg(fullFileRetainedEnergy_ * 100.0, 0, 'f', 2)
+                   ? (fullFileMode_ == 0 &&
+                              fullFileSelectionMode_ == 1
+                          ? QStringLiteral(
+                                "%1% target resolved to %2 bins; %3% retained")
+                                .arg(
+                                    fullFileEnergyTarget_ * 100.0,
+                                    0,
+                                    'f',
+                                    2)
+                                .arg(fullFileSelectedComponents_)
+                                .arg(
+                                    fullFileRetainedEnergy_ * 100.0,
+                                    0,
+                                    'f',
+                                    3)
+                          : QStringLiteral(
+                                "%1 reconstruction ready; %2% retained energy")
+                                .arg(
+                                    fullFileMode_ == 0
+                                        ? (channelCount > 1U
+                                               ? QStringLiteral("Stereo FFT")
+                                               : QStringLiteral("Mono FFT"))
+                                        : QStringLiteral("STFT"))
+                                .arg(
+                                    fullFileRetainedEnergy_ * 100.0,
+                                    0,
+                                    'f',
+                                    2))
                    : QStringLiteral("Reconstruction ready for export; playback is unavailable"))
             : QStringLiteral("Whole-file reconstruction produced no samples"));
     emit fullFileChanged();

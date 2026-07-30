@@ -223,20 +223,23 @@ ScrollView {
                         ctx.moveTo(0, height / 2)
                         ctx.lineTo(width, height / 2)
                         ctx.stroke()
-                        const values = spectra.synthWaveform
-                        if (!values || values.length < 2)
+                        const minimums = spectra.synthWaveformMinimums
+                        const maximums = spectra.synthWaveformMaximums
+                        if (!minimums || !maximums
+                                || minimums.length < 2
+                                || minimums.length !== maximums.length)
                             return
                         ctx.strokeStyle = theme.accent
-                        ctx.lineWidth = 1.5
+                        ctx.lineWidth = 1
                         ctx.beginPath()
-                        for (let i = 0; i < values.length; ++i) {
-                            const x = i * width / (values.length - 1)
-                            const amplitude = Number(values[i])
-                            const y = height / 2 - amplitude * height * 0.42
-                            if (i === 0)
-                                ctx.moveTo(x, y)
-                            else
-                                ctx.lineTo(x, y)
+                        for (let i = 0; i < minimums.length; ++i) {
+                            const x = i * width / (minimums.length - 1)
+                            const minimumY = height / 2
+                                - Number(minimums[i]) * height * 0.42
+                            const maximumY = height / 2
+                                - Number(maximums[i]) * height * 0.42
+                            ctx.moveTo(x, minimumY)
+                            ctx.lineTo(x, maximumY)
                         }
                         ctx.stroke()
                     }
@@ -286,6 +289,28 @@ ScrollView {
                                 ctx.lineTo(x, y)
                         }
                         ctx.stroke()
+
+                        const peaks = spectra.synthPeaks
+                        ctx.fillStyle = theme.danger
+                        for (let peakIndex = 0;
+                                peakIndex < peaks.length;
+                                ++peakIndex) {
+                            const peak = peaks[peakIndex]
+                            const frequency = Number(peak.frequency)
+                            if (frequency > 8000)
+                                continue
+                            const x = frequency / 8000 * width
+                            const normalized = Math.max(
+                                0,
+                                Math.min(
+                                    1,
+                                    (Number(peak.db) + 80) / 80))
+                            const y =
+                                height - normalized * (height - 8) - 4
+                            ctx.beginPath()
+                            ctx.arc(x, y, 4, 0, Math.PI * 2)
+                            ctx.fill()
+                        }
                     }
 
                     Connections {
@@ -313,10 +338,31 @@ ScrollView {
                         }
 
                         Text {
-                            text: spectra.synthPeakCount + " spectral peaks above threshold"
+                            text: spectra.synthPeakCount
+                                + " spectral peaks above -55 dB"
                             color: theme.muted
                             font.family: theme.bodyFamily
                             font.pixelSize: theme.fontSize(12)
+                        }
+
+                        Repeater {
+                            model: Math.min(5, spectra.synthPeaks.length)
+
+                            Text {
+                                required property int index
+
+                                readonly property var peak:
+                                    spectra.synthPeaks[index]
+
+                                text: (index + 1) + ".  "
+                                    + Number(peak.frequency).toFixed(1)
+                                    + " Hz   "
+                                    + Number(peak.db).toFixed(1)
+                                    + " dB"
+                                color: theme.muted
+                                font.family: theme.bodyFamily
+                                font.pixelSize: theme.fontSize(11)
+                            }
                         }
                     }
 

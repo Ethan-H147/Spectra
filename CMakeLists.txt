@@ -97,6 +97,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         set(SPECTRA_QT_CORE_SOURCES
             "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/audio_engine.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/audio_import.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/reconstruction_cache.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/additive_synth.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/channel_mix.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/dsp_types.c"
