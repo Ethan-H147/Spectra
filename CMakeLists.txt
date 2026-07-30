@@ -211,6 +211,13 @@ if(SPECTRA_BUILD_QT_FRONTEND)
             TARGETS spectra_desktop
             RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         )
+        install(
+            DIRECTORY "$<TARGET_FILE_DIR:spectra_desktop>/"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            FILES_MATCHING
+                PATTERN "*.dll"
+                PATTERN "Qt6*.dll" EXCLUDE
+        )
         qt_generate_deploy_qml_app_script(
             TARGET spectra_desktop
             OUTPUT_SCRIPT SPECTRA_QT_DEPLOY_SCRIPT
