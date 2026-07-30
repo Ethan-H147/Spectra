@@ -1,0 +1,25 @@
+{
+  "name": "spectra",
+  "version-string": "0.1.0",
+  "description": "Fourier audio analysis and reconstruction desktop application",
+  "license": "MIT",
+  "builtin-baseline": "86dc619bd8d9697405ae5c944b474117ea9457ce",
+  "dependencies": [
+    "glfw3",
+    "raylib",
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "gui",
+        "png",
+        "thread",
+        "windeployqt"
+      ]
+    },
+    {
+      "name": "qtdeclarative",
+      "default-features": false
+    }
+  ]
+}

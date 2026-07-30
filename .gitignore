@@ -3,6 +3,9 @@ my_program
 my_program.exe
 c_spectra
 build/
+build-windows/
+build-qt/
+vcpkg_installed/
 dsp_tests
 
 # Ignore VS Code settings folders (optional, but good practice)

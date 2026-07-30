@@ -1,6 +1,6 @@
 # Spectra
 
-Spectra is a C99 desktop application for studying Fourier representations of audio. Raylib supplies the window, input, audio device, and decoded audio samples.
+Spectra is a desktop application for studying Fourier representations of audio. Qt Quick and QML render the application window, controls, and layout. The signal-processing core remains C99. Raylib currently supplies audio decoding and playback behind the Qt controller.
 
 The application generates tones, imports audio files, analyzes selected regions, and reconstructs audio from reduced spectral representations. Each reconstruction path models a different mathematical object.
 
@@ -12,7 +12,7 @@ Spectra keeps these terms distinct:
 - An **STFT frame** is a windowed time segment with its own Fourier components.
 - A **reconstruction** is an audio buffer produced from a selected spectral representation.
 
-The active application entry point is `src/main.c`. The root-level `main.c` and `wav.h` belong to an earlier experiment.
+The active application entry point is `src/qt/main.cpp`. `src/main.c` builds the retained Raylib frontend as `spectra_legacy`. The root-level `main.c` and `wav.h` belong to an earlier experiment.
 
 ## Reconstruction models
 
@@ -129,21 +129,17 @@ The visualization does not select reconstruction bins. Mono FFT, Stereo FFT, and
 
 ### Fixed-model memory policy
 
-The default fixed-model limit equals 768 MB. Settings cycles through 512 MB, 768 MB, 1 GB, and 1.5 GB.
+The Qt frontend applies a 768 MB fixed-model limit. The retained frontend exposes 512 MB, 768 MB, 1 GB, and 1.5 GB settings.
 
 The estimator counts transform arrays and ranked Fourier components. The limit governs fixed-model allocations, not total process memory.
 
-For stereo sources, startup selects the largest channel configuration that fits:
+The Qt frontend preserves both channels when a stereo FFT model fits. It rejects the fixed model when the pair exceeds the limit. STFT remains available.
 
-1. Stereo FFT when two models fit.
-2. Mono FFT when only one model fits.
-3. No fixed model when one model exceeds the limit.
-
-STFT remains available when the fixed model exceeds the limit. Changing the memory limit does not rebuild a model that already exists.
+The retained frontend can fall back from a stereo FFT model to mono when one model fits. Changing its memory limit does not rebuild an existing model.
 
 ### Background tasks
 
-Full-file DSP runs outside the UI thread:
+The retained frontend runs full-file DSP outside the UI thread:
 
 - Spectrogram generation.
 - Fixed whole-file FFT analysis.
@@ -154,9 +150,11 @@ Full-file DSP runs outside the UI thread:
 
 The UI thread joins completed workers before it moves output buffers into Raylib audio objects or GPU textures. Mode changes and file unloads request cancellation before they release worker-owned state.
 
+The Qt frontend processes bounded FFT operations or STFT frames on each event-loop tick. It releases active jobs before it unloads their source audio.
+
 ### Reconstruction cache
 
-The session cache stores six recent full-file reconstructions. Its total audio-data limit equals 256 MB.
+The retained frontend stores six recent full-file reconstructions. Its total audio-data limit equals 256 MB. The Qt frontend does not cache reconstruction buffers.
 
 Each cache key contains:
 
@@ -174,8 +172,8 @@ Spectra contains six workspaces:
 2. **Synthesizer** edits harmonic amplitudes and generated-tone parameters.
 3. **Audio Analysis** imports audio and analyzes a selected region.
 4. **Harmonic Lab** compares harmonic and Fourier-frame reconstructions.
-5. **Spectrogram** controls Mono FFT, Stereo FFT, and STFT reconstruction.
-6. **Settings** controls text scale and the fixed-model memory limit.
+5. **Spectrogram** displays source STFT data and controls whole-file FFT or STFT reconstruction.
+6. **Settings** controls text scale and reports audio runtime state.
 
 The shell keeps a fixed navigation rail and a full-width status bar. F11 toggles borderless full screen. F1 opens the Help Center.
 
@@ -185,13 +183,16 @@ The default window measures 1,600 by 900 pixels. The minimum window measures 1,1
 
 Text scale starts at 110 percent. Settings supports values from 90 through 140 percent.
 
-Spectra loads Segoe UI on Windows when the font exists. A Chinese fallback font loads only after a filename requires non-ASCII glyphs.
+Spectra requests Segoe UI on Windows. Qt selects a platform fallback when a label requires glyphs outside that font.
 
 ## Source organization
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.c` | Application state, worker orchestration, playback routing, exports, and page dispatch |
+| `src/qt/main.cpp` | Qt application startup, icon setup, and QML module loading |
+| `src/qt/spectra_controller.cpp` | QML state, playback routing, imports, analysis, reconstruction, and exports |
+| `qml/` | Application shell, reusable controls, and workspace layouts |
+| `src/main.c` | Retained Raylib frontend and background-worker orchestration |
 | `src/audio/audio_import.c` | Decoding, Unicode paths, channel preservation, and mono reference generation |
 | `src/audio/audio_engine.c` | Raylib audio objects, transport state, and PCM WAV export |
 | `src/audio/reconstruction_cache.c` | Bounded ownership-transferring reconstruction cache |
@@ -207,7 +208,7 @@ Spectra loads Segoe UI on Windows when the font exists. A Chinese fallback font 
 | `src/platform/background_task.c` | Cancellable worker abstraction |
 | `src/platform/file_io.c` | UTF-8-aware file operations |
 | `src/platform/windows_app.c` | Native dialogs, DPI setup, icon handling, and Windows process setup |
-| `src/ui/app_shell.c` | Workspace rendering and action collection |
+| `src/ui/app_shell.c` | Retained Raylib workspace rendering and action collection |
 | `src/ui/spectrogram_layout.c` | Testable Spectrogram geometry |
 | `src/ui/theme.c` | Font loading, glyph coverage, color values, and text scale |
 | `src/ui/help_center.c` | Workspace tutorials |
@@ -219,6 +220,7 @@ The Windows build requires:
 - CMake 3.20 or newer.
 - Visual Studio 2022 C++ Build Tools.
 - vcpkg.
+- Qt 6.8 or newer with Qt Quick and QML.
 - `raylib:x64-windows`.
 - `glfw3:x64-windows`.
 
@@ -226,7 +228,8 @@ Configure the project:
 
 ```powershell
 cmake -S . -B build-windows `
-  -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+  -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
 ```
 
 Build the Release configuration:
@@ -241,7 +244,13 @@ Run the native executable:
 .\build-windows\Release\spectra_desktop.exe
 ```
 
-The vcpkg Raylib build uses custom frame control on Windows. Spectra swaps the buffer, polls Windows events, and applies 60 Hz frame pacing.
+The primary `spectra_desktop` target uses Qt Quick layouts. The `spectra_legacy` target retains the previous Raylib window for regression comparison.
+
+Build the retained frontend explicitly:
+
+```powershell
+cmake --build build-windows --config Release --target spectra_legacy
+```
 
 If PowerShell exposes both `PATH` and `Path`, remove the uppercase process variable before the build:
 
@@ -276,27 +285,19 @@ Run the DSP suite directly:
 
 ## Windows package
 
-CPack creates a portable ZIP archive:
+CMake installs the executable, Qt runtime, QML modules, platform plugins, license, and README into one directory:
 
 ```powershell
-cmake --build build-windows --config Release --target package
+cmake --install build-windows `
+  --config Release `
+  --prefix build-windows\package
 ```
 
-The command writes `build-windows\Spectra-1.0.0-windows-x64.zip`.
-
-The archive contains:
-
-- `spectra_desktop.exe`
-- Raylib and GLFW runtime libraries
-- Windows version metadata and manifest
-- Application icon
-- License
-- README
-- Logo assets
+Run `build-windows\package\bin\spectra_desktop.exe`. The vcpkg QtBase package must include the `windeployqt` feature.
 
 ## Linux build
 
-The Makefile builds the same `src/main.c` entry point when Raylib exists on the host system:
+The Makefile builds the retained `src/main.c` frontend when Raylib exists on the host system:
 
 ```bash
 make
@@ -310,11 +311,11 @@ The Makefile writes the application to `build/spectra_desktop`.
 
 - Imported-file decoding runs on the UI thread.
 - Selected-region analysis runs on the UI thread.
+- The Qt frontend processes whole-file FFT and STFT jobs incrementally on the UI event loop.
 - Full-file reconstruction accepts at most 600 seconds of audio.
 - Fixed whole-file FFT models allocate memory in proportion to the padded transform size.
-- The 1.5 GB setting permits a large model allocation during the current session.
 - Settings do not persist after process exit.
-- The cache does not persist after process exit.
+- The retained reconstruction cache does not persist after process exit.
 - The pitch estimator requires a stable periodic signal.
 - Harmonic resynthesis discards phase and time-varying articulation.
 - Fixed FFT bins do not represent detected musical harmonics.

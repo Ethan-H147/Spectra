@@ -2,6 +2,7 @@
 
 #include "dsp/signal_utils.h"
 #include "platform/file_io.h"
+#include "platform/monotonic_clock.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -102,7 +103,8 @@ bool audio_clip_play(AudioClip *clip) {
     PlaySound(clip->sound);
     clip->paused = false;
     clip->paused_position_seconds = 0.0f;
-    clip->playback_started_at = GetTime();
+    clip->playback_started_at =
+        platform_monotonic_seconds();
     return true;
 }
 
@@ -113,7 +115,8 @@ bool audio_clip_pause(AudioClip *clip) {
     }
 
     clip->paused_position_seconds +=
-        (float)(GetTime() - clip->playback_started_at);
+        (float)(platform_monotonic_seconds() -
+                clip->playback_started_at);
     if (clip->paused_position_seconds > clip->duration_seconds) {
         clip->paused_position_seconds = clip->duration_seconds;
     }
@@ -129,7 +132,8 @@ bool audio_clip_resume(AudioClip *clip) {
 
     ResumeSound(clip->sound);
     clip->paused = false;
-    clip->playback_started_at = GetTime();
+    clip->playback_started_at =
+        platform_monotonic_seconds();
     return true;
 }
 
@@ -170,7 +174,8 @@ float audio_clip_position_seconds(const AudioClip *clip) {
 
     float position =
         clip->paused_position_seconds +
-        (float)(GetTime() - clip->playback_started_at);
+        (float)(platform_monotonic_seconds() -
+                clip->playback_started_at);
     if (position < 0.0f) position = 0.0f;
     if (position > clip->duration_seconds) position = clip->duration_seconds;
     return position;
