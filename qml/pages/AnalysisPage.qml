@@ -608,7 +608,7 @@ ScrollView {
                         let started = false
                         for (let i = 0; i < values.length; ++i) {
                             const pointFrequency =
-                                i / (values.length - 1) * spectrumMaximumFrequency
+                                i / values.length * spectrumMaximumFrequency
                             if (pointFrequency < minimumFrequency)
                                 continue
                             if (pointFrequency > maximumFrequency)

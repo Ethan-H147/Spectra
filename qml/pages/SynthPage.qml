@@ -279,14 +279,20 @@ ScrollView {
                         ctx.strokeStyle = theme.accent
                         ctx.lineWidth = 1.5
                         ctx.beginPath()
+                        let started = false
                         for (let i = 0; i < values.length; ++i) {
-                            const x = i * width / (values.length - 1)
+                            const frequency = i / values.length * 22050
+                            if (frequency > 8000)
+                                break
+                            const x = frequency / 8000 * width
                             const normalized = Math.max(0, Math.min(1, (Number(values[i]) + 80) / 80))
                             const y = height - normalized * (height - 8) - 4
-                            if (i === 0)
+                            if (!started) {
                                 ctx.moveTo(x, y)
-                            else
+                                started = true
+                            } else {
                                 ctx.lineTo(x, y)
+                            }
                         }
                         ctx.stroke()
 

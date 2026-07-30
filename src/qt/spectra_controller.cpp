@@ -27,7 +27,6 @@ constexpr unsigned int kSampleRate = 44100U;
 constexpr int kHarmonicCount = 16;
 constexpr int kMaximumPeaks = 12;
 constexpr int kWaveformPoints = 512;
-constexpr int kSpectrumPoints = 512;
 constexpr int kSourceWaveformPoints = 1024;
 constexpr unsigned int kFullFileWindowSize = 2048U;
 constexpr unsigned int kFullFileHopSize = 512U;
@@ -1470,13 +1469,9 @@ void SpectraController::rebuildSynthVisualization() {
 
     synthSpectrum_.clear();
     if (synthSpectrumBuffer_.magnitudes != nullptr && synthSpectrumBuffer_.count > 0U) {
-        const size_t visibleCount = std::min(
-            synthSpectrumBuffer_.count,
-            static_cast<size_t>(8000.0 * synthSpectrumBuffer_.count * 2.0 / kSampleRate));
-        synthSpectrum_.reserve(kSpectrumPoints);
-        for (int point = 0; point < kSpectrumPoints; ++point) {
-            const size_t index = static_cast<size_t>(point) * std::max<size_t>(1U, visibleCount - 1U)
-                / std::max(1, kSpectrumPoints - 1);
+        synthSpectrum_.reserve(
+            static_cast<qsizetype>(synthSpectrumBuffer_.count));
+        for (size_t index = 0; index < synthSpectrumBuffer_.count; ++index) {
             const float magnitude = synthSpectrumBuffer_.magnitudes[index];
             const float decibels = 20.0f * std::log10(std::max(magnitude, 0.00001f));
             synthSpectrum_.append(std::max(-80.0f, std::min(0.0f, decibels)));
@@ -1553,12 +1548,11 @@ void SpectraController::rebuildAnalysisVisualization() {
     analysisSpectrum_.clear();
     if (analysisSpectrumBuffer_.magnitudes != nullptr &&
         analysisSpectrumBuffer_.count > 0U) {
-        const size_t visibleCount = analysisSpectrumBuffer_.count;
-        analysisSpectrum_.reserve(kSpectrumPoints);
-        for (int point = 0; point < kSpectrumPoints; ++point) {
-            const size_t index = static_cast<size_t>(point) *
-                std::max<size_t>(1U, visibleCount - 1U) /
-                std::max(1, kSpectrumPoints - 1);
+        analysisSpectrum_.reserve(
+            static_cast<qsizetype>(analysisSpectrumBuffer_.count));
+        for (size_t index = 0;
+             index < analysisSpectrumBuffer_.count;
+             ++index) {
             const float magnitude = analysisSpectrumBuffer_.magnitudes[index];
             const float decibels = 20.0f * std::log10(std::max(magnitude, 0.00001f));
             analysisSpectrum_.append(std::max(-100.0f, std::min(0.0f, decibels)));
