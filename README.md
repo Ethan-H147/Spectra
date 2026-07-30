@@ -8,7 +8,7 @@ Raylib remains a runtime dependency for audio decoding and playback. It no longe
 
 `spectra_qt` is the primary application and the default frontend.
 
-The previous Raylib frontend remains available under [`legacy/raylib`](legacy/raylib). CMake excludes it from normal builds unless `SPECTRA_BUILD_RAYLIB_LEGACY` is enabled. The `raylib-v1` tag records the last commit where that frontend was the primary application.
+The `raylib-v1` tag preserves the retired Raylib-first application. The current source tree contains only the Qt frontend.
 
 Generated build trees, compiled binaries, editor state, and local audio files are not stored in the repository.
 
@@ -55,8 +55,6 @@ The STFT path uses a 2,048-sample Hann window and a 512-sample hop. Normalized o
 | `src/dsp/` | Synthesis, FFT, pitch, peak, harmonic, and STFT processing |
 | `src/platform/` | Background tasks, file access, timing, and Windows integration |
 | `tests/` | Canonical audio, DSP, and runtime tests |
-| `legacy/raylib/` | Previous Raylib frontend and its UI tests |
-| `legacy/prototype/` | Initial WAV-viewer experiment |
 
 Full-file spectrogram generation, FFT analysis, inverse FFT reconstruction, and STFT reconstruction run on background workers. The UI thread polls progress and transfers completed buffers into playback or display objects.
 
@@ -69,7 +67,6 @@ Requirements:
 - vcpkg
 - Qt 6.8 or newer with Qt Quick and QML
 - `raylib:x64-windows`
-- `glfw3:x64-windows`
 
 Configure:
 
@@ -130,29 +127,6 @@ Build and run the test suite:
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
-
-Enabling the legacy frontend also registers `raylib_ui_tests`.
-
-## Legacy Raylib frontend
-
-Configure the legacy frontend in a separate build tree:
-
-```powershell
-cmake -S . -B build-raylib `
-  -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
-  -DVCPKG_TARGET_TRIPLET=x64-windows `
-  -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON `
-  -DSPECTRA_BUILD_QT_FRONTEND=OFF `
-  -DSPECTRA_BUILD_RAYLIB_LEGACY=ON
-```
-
-Build:
-
-```powershell
-cmake --build build-raylib --config Release --target spectra_raylib
-```
-
-See [`legacy/README.md`](legacy/README.md) for the preservation policy and Linux Makefile.
 
 ## Constraints
 

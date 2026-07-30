@@ -86,6 +86,41 @@ static int test_spectrum_for_a4(void) {
     return 0;
 }
 
+static int test_averaged_spectrum_uses_the_full_region(void) {
+    const unsigned int sample_rate = 4096U;
+    SampleBuffer tone =
+        generate_sine_wave(440.0f, 0.8f, 12.0f, sample_rate);
+    ASSERT_TRUE(tone.samples != NULL && tone.count == 49152U,
+                "long spectrum fixture should contain twelve seconds of audio");
+
+    const size_t silent_start = tone.count / 3U;
+    const size_t silent_end = silent_start * 2U;
+    for (size_t index = silent_start; index < silent_end; ++index) {
+        tone.samples[index] = 0.0f;
+    }
+
+    Spectrum spectrum = compute_averaged_magnitude_spectrum(
+        tone.samples,
+        tone.count,
+        tone.sample_rate);
+    Peak peaks[4] = {0};
+    int peak_count = find_interpolated_peaks(
+        &spectrum,
+        50.0f,
+        1000.0f,
+        -20.0f,
+        peaks,
+        4);
+    ASSERT_TRUE(peak_count >= 1,
+                "a silent center must not erase tones elsewhere in a long region");
+    ASSERT_TRUE(fabsf(peaks[0].frequency - 440.0f) < 0.5f,
+                "the averaged full-region spectrum should retain the long-region tone");
+
+    spectrum_free(&spectrum);
+    sample_buffer_free(&tone);
+    return 0;
+}
+
 static int test_pitch_for_a4(void) {
     SampleBuffer sine = generate_sine_wave(440.0f, 0.8f, 0.5f, 44100);
     PitchEstimate pitch = estimate_pitch(&sine, 40.0f, 1200.0f);
@@ -708,6 +743,7 @@ int main(void) {
     if (test_additive_normalization() != 0) return 1;
     if (test_peak_detection() != 0) return 1;
     if (test_spectrum_for_a4() != 0) return 1;
+    if (test_averaged_spectrum_uses_the_full_region() != 0) return 1;
     if (test_pitch_for_a4() != 0) return 1;
     if (test_pitch_for_harmonic_tone() != 0) return 1;
     if (test_pitch_rejects_silence() != 0) return 1;

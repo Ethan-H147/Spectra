@@ -4,32 +4,21 @@
   "description": "Fourier audio analysis and reconstruction desktop application",
   "license": "MIT",
   "builtin-baseline": "86dc619bd8d9697405ae5c944b474117ea9457ce",
-  "default-features": [
-    "qt"
-  ],
   "dependencies": [
-    "glfw3",
-    "raylib"
-  ],
-  "features": {
-    "qt": {
-      "description": "Dependencies for the canonical Qt Quick frontend",
-      "dependencies": [
-        {
-          "name": "qtbase",
-          "default-features": false,
-          "features": [
-            "gui",
-            "png",
-            "thread",
-            "windeployqt"
-          ]
-        },
-        {
-          "name": "qtdeclarative",
-          "default-features": false
-        }
+    "raylib",
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "gui",
+        "png",
+        "thread",
+        "windeployqt"
       ]
+    },
+    {
+      "name": "qtdeclarative",
+      "default-features": false
     }
-  }
+  ]
 }

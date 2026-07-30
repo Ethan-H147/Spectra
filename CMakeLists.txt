@@ -14,16 +14,6 @@ option(
     "Build the canonical Qt Quick/QML desktop application"
     ON
 )
-option(
-    SPECTRA_BUILD_RAYLIB_LEGACY
-    "Build the archived Raylib frontend and its UI tests"
-    OFF
-)
-option(
-    SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL
-    "Drive Raylib buffer swapping, event polling, and frame pacing explicitly"
-    ${WIN32}
-)
 
 find_package(raylib CONFIG QUIET)
 if(NOT raylib_FOUND)
@@ -33,8 +23,6 @@ endif()
 find_package(Threads REQUIRED)
 
 if(WIN32)
-    find_package(glfw3 CONFIG REQUIRED)
-
     string(
         REPLACE "\\" "/"
         SPECTRA_ICON_PATH
@@ -84,15 +72,7 @@ function(spectra_enable_warnings target_name)
 endfunction()
 
 function(spectra_link_platform target_name)
-    if(WIN32)
-        target_link_libraries(
-            ${target_name}
-            PRIVATE
-                winmm
-                shell32
-                comdlg32
-        )
-    elseif(UNIX AND NOT APPLE)
+    if(UNIX AND NOT APPLE)
         target_link_libraries(${target_name} PRIVATE m)
     endif()
 endfunction()
@@ -148,6 +128,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
             PRIVATE
                 "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc"
         )
+        target_link_libraries(spectra_qt PRIVATE shell32)
     endif()
 
     set(SPECTRA_QML_FILES
@@ -239,64 +220,6 @@ if(SPECTRA_BUILD_QT_FRONTEND)
     )
 endif()
 
-if(SPECTRA_BUILD_RAYLIB_LEGACY)
-    file(
-        GLOB
-        SPECTRA_RAYLIB_UI_SOURCES
-        CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/legacy/raylib/ui/*.c"
-    )
-
-    add_executable(
-        spectra_raylib
-        "${CMAKE_CURRENT_SOURCE_DIR}/legacy/raylib/main.c"
-        ${SPECTRA_RAYLIB_UI_SOURCES}
-        ${SPECTRA_CORE_SOURCES}
-    )
-    target_include_directories(
-        spectra_raylib
-        PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/legacy/raylib"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    )
-    target_link_libraries(
-        spectra_raylib
-        PRIVATE
-            raylib
-            Threads::Threads
-    )
-    spectra_enable_warnings(spectra_raylib)
-    spectra_link_platform(spectra_raylib)
-
-    if(SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL)
-        target_compile_definitions(
-            spectra_raylib
-            PRIVATE
-                SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL=1
-        )
-    endif()
-    if(WIN32)
-        set_target_properties(
-            spectra_raylib
-            PROPERTIES
-                WIN32_EXECUTABLE TRUE
-        )
-        target_sources(
-            spectra_raylib
-            PRIVATE
-                "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc"
-        )
-        if(MSVC)
-            target_link_options(
-                spectra_raylib
-                PRIVATE
-                    /ENTRY:mainCRTStartup
-                    /MANIFEST:NO
-            )
-        endif()
-    endif()
-endif()
-
 file(
     GLOB_RECURSE
     SPECTRA_DSP_SOURCES
@@ -350,22 +273,6 @@ target_include_directories(
 target_link_libraries(runtime_tests PRIVATE Threads::Threads)
 spectra_enable_warnings(runtime_tests)
 
-if(SPECTRA_BUILD_RAYLIB_LEGACY)
-    add_executable(
-        raylib_ui_tests
-        "${CMAKE_CURRENT_SOURCE_DIR}/legacy/raylib/tests/ui_layout_tests.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/legacy/raylib/ui/spectrogram_layout.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/legacy/raylib/ui/spectrum_viewport.c"
-    )
-    target_include_directories(
-        raylib_ui_tests
-        PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/legacy/raylib"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    )
-    spectra_enable_warnings(raylib_ui_tests)
-endif()
-
 spectra_link_platform(dsp_tests)
 spectra_link_platform(audio_import_tests)
 
@@ -373,6 +280,3 @@ enable_testing()
 add_test(NAME dsp_tests COMMAND dsp_tests)
 add_test(NAME audio_import_tests COMMAND audio_import_tests)
 add_test(NAME runtime_tests COMMAND runtime_tests)
-if(SPECTRA_BUILD_RAYLIB_LEGACY)
-    add_test(NAME raylib_ui_tests COMMAND raylib_ui_tests)
-endif()

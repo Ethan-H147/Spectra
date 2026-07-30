@@ -903,15 +903,10 @@ void SpectraController::analyzeRegion() {
 
     resetAnalysis();
 
-    SampleBuffer fftFrame = region;
-    if (fftFrame.count > 16384U) {
-        fftFrame.samples += (fftFrame.count - 16384U) / 2U;
-        fftFrame.count = 16384U;
-    }
-    analysisSpectrumBuffer_ = compute_magnitude_spectrum(
-        fftFrame.samples,
-        fftFrame.count,
-        fftFrame.sample_rate);
+    analysisSpectrumBuffer_ = compute_averaged_magnitude_spectrum(
+        region.samples,
+        region.count,
+        region.sample_rate);
     if (analysisSpectrumBuffer_.count == 0U) {
         setStatusText(QStringLiteral("Could not compute the selected region spectrum"));
         emit analysisChanged();
