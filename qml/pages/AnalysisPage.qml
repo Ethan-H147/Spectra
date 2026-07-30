@@ -176,6 +176,12 @@ ScrollView {
                             spectra.toggleSourcePlayback()
                     }
                     onStopRequested: spectra.stopPlayback()
+                    onSeekRequested: function(position) {
+                        if (spectra.regionActive)
+                            spectra.seekRegionPlayback(position)
+                        else
+                            spectra.seekSourcePlayback(position)
+                    }
                 }
 
                 Text {

@@ -2216,6 +2216,14 @@ int main(void) {
 #if defined(SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL)
         double frame_started_at = GetTime();
 #endif
+        audio_clip_update(&clip);
+        audio_clip_update(&imported.full_clip);
+        audio_clip_update(&imported.region_clip);
+        audio_clip_update(&imported.harmonic_clip);
+        audio_clip_update(&imported.frame_original_clip);
+        audio_clip_update(&imported.fourier_clip);
+        audio_clip_update(&imported.global_clip);
+        audio_clip_update(&imported.adaptive_clip);
 
         bool toggle_fullscreen_requested = IsKeyPressed(KEY_F11);
         bool toggle_help_requested = IsKeyPressed(KEY_F1);

@@ -202,17 +202,21 @@ public:
     Q_INVOKABLE void applySynthPreset(int preset);
     Q_INVOKABLE void playSynth();
     Q_INVOKABLE void toggleSynthPlayback();
+    Q_INVOKABLE void seekSynthPlayback(double position);
     Q_INVOKABLE void toggleSourcePlayback();
+    Q_INVOKABLE void seekSourcePlayback(double position);
     Q_INVOKABLE void setRegionStart(double start);
     Q_INVOKABLE void setRegionDuration(double duration);
     Q_INVOKABLE void setAnalysisPeakReadoutMode(int mode);
     Q_INVOKABLE void analyzeRegion();
     Q_INVOKABLE void playRegion();
     Q_INVOKABLE void toggleRegionPlayback();
+    Q_INVOKABLE void seekRegionPlayback(double position);
     Q_INVOKABLE void playHarmonicModel();
     Q_INVOKABLE void playOriginalFrame();
     Q_INVOKABLE void playFourierFrame();
     Q_INVOKABLE void toggleLabPlayback();
+    Q_INVOKABLE void seekLabPlayback(double position);
     Q_INVOKABLE void rebuildFourierFrame(int componentCount);
     Q_INVOKABLE bool exportHarmonicFile(const QUrl &url);
     Q_INVOKABLE bool exportFourierFile(const QUrl &url);
@@ -226,6 +230,7 @@ public:
     Q_INVOKABLE void playFullFileOriginal();
     Q_INVOKABLE void playFullFileReconstruction();
     Q_INVOKABLE void toggleFullFilePlayback();
+    Q_INVOKABLE void seekFullFilePlayback(double position);
     Q_INVOKABLE bool exportFullFileFile(const QUrl &url);
     Q_INVOKABLE void stopPlayback();
     Q_INVOKABLE void importAudioFile(const QUrl &url);
@@ -291,6 +296,10 @@ private:
         unsigned int channelCount,
         double retainedEnergy);
     unsigned int fullFileReconstructionChannels() const;
+    void seekClip(
+        AudioClip *clip,
+        PlaybackTarget target,
+        double position);
     void refreshPlaybackState();
     void haltAllAudio();
     AudioClip *activeClip();

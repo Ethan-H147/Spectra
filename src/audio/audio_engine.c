@@ -2,12 +2,12 @@
 
 #include "dsp/signal_utils.h"
 #include "platform/file_io.h"
-#include "platform/monotonic_clock.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <limits.h>
+#include <string.h>
 
 static int16_t float_to_pcm16(float value) {
     float clipped = clampf(value, -1.0f, 1.0f);
@@ -26,6 +26,18 @@ static void write_u32_le(FILE *file, uint32_t value) {
     fputc((value >> 24) & 0xff, file);
 }
 
+static void store_u16_le(unsigned char *bytes, uint16_t value) {
+    bytes[0] = (unsigned char)(value & 0xffU);
+    bytes[1] = (unsigned char)((value >> 8U) & 0xffU);
+}
+
+static void store_u32_le(unsigned char *bytes, uint32_t value) {
+    bytes[0] = (unsigned char)(value & 0xffU);
+    bytes[1] = (unsigned char)((value >> 8U) & 0xffU);
+    bytes[2] = (unsigned char)((value >> 16U) & 0xffU);
+    bytes[3] = (unsigned char)((value >> 24U) & 0xffU);
+}
+
 void audio_clip_init(AudioClip *clip) {
     if (clip == NULL) {
         return;
@@ -38,45 +50,80 @@ bool audio_clip_set_interleaved(AudioClip *clip,
     if (clip == NULL || buffer == NULL || buffer->samples == NULL ||
         buffer->frame_count == 0U || buffer->sample_rate == 0U ||
         buffer->channel_count == 0U ||
+        buffer->channel_count > UINT16_MAX ||
         buffer->frame_count > UINT_MAX ||
         buffer->frame_count >
             SIZE_MAX / (size_t)buffer->channel_count) {
         return false;
     }
+    const uint64_t byte_rate =
+        (uint64_t)buffer->sample_rate *
+        (uint64_t)buffer->channel_count *
+        sizeof(int16_t);
+    if (byte_rate > UINT32_MAX) {
+        return false;
+    }
 
     audio_clip_unload(clip);
 
-    size_t sample_count =
+    const size_t sample_count =
         buffer->frame_count * (size_t)buffer->channel_count;
-    if (sample_count > SIZE_MAX / sizeof(int16_t)) {
+    if (sample_count >
+            (UINT32_MAX - 36U) / sizeof(int16_t) ||
+        sample_count >
+            (size_t)(INT_MAX - 44) / sizeof(int16_t)) {
         return false;
     }
-    int16_t *pcm =
-        (int16_t *)calloc(sample_count, sizeof(int16_t));
-    if (pcm == NULL) {
+    const uint32_t data_bytes =
+        (uint32_t)(sample_count * sizeof(int16_t));
+    const size_t encoded_size = 44U + (size_t)data_bytes;
+    unsigned char *encoded =
+        (unsigned char *)calloc(encoded_size, 1U);
+    if (encoded == NULL) {
         return false;
     }
 
+    memcpy(encoded, "RIFF", 4U);
+    store_u32_le(encoded + 4U, 36U + data_bytes);
+    memcpy(encoded + 8U, "WAVEfmt ", 8U);
+    store_u32_le(encoded + 16U, 16U);
+    store_u16_le(encoded + 20U, 1U);
+    store_u16_le(
+        encoded + 22U,
+        (uint16_t)buffer->channel_count);
+    store_u32_le(encoded + 24U, buffer->sample_rate);
+    store_u32_le(
+        encoded + 28U,
+        (uint32_t)byte_rate);
+    store_u16_le(
+        encoded + 32U,
+        (uint16_t)(buffer->channel_count *
+                   (unsigned int)sizeof(int16_t)));
+    store_u16_le(encoded + 34U, 16U);
+    memcpy(encoded + 36U, "data", 4U);
+    store_u32_le(encoded + 40U, data_bytes);
     for (size_t i = 0; i < sample_count; i++) {
-        pcm[i] = float_to_pcm16(buffer->samples[i]);
+        store_u16_le(
+            encoded + 44U + i * sizeof(int16_t),
+            (uint16_t)float_to_pcm16(buffer->samples[i]));
     }
 
-    Wave wave = {0};
-    wave.frameCount = (unsigned int)buffer->frame_count;
-    wave.sampleRate = buffer->sample_rate;
-    wave.sampleSize = 16;
-    wave.channels = buffer->channel_count;
-    wave.data = pcm;
-
-    clip->sound = LoadSoundFromWave(wave);
-    clip->loaded = clip->sound.frameCount > 0;
+    clip->music = LoadMusicStreamFromMemory(
+        ".wav",
+        encoded,
+        (int)encoded_size);
+    clip->loaded = IsMusicValid(clip->music);
     if (clip->loaded) {
+        clip->encoded_data = encoded;
+        clip->encoded_size = (int)encoded_size;
         clip->duration_seconds =
             (float)buffer->frame_count /
             (float)buffer->sample_rate;
-        SetSoundVolume(clip->sound, 1.0f);
+        clip->music.looping = false;
+        SetMusicVolume(clip->music, 1.0f);
+    } else {
+        free(encoded);
     }
-    free(pcm);
     return clip->loaded;
 }
 
@@ -98,29 +145,20 @@ bool audio_clip_play(AudioClip *clip) {
         return false;
     }
 
-    StopSound(clip->sound);
-    SetSoundVolume(clip->sound, 1.0f);
-    PlaySound(clip->sound);
+    StopMusicStream(clip->music);
+    SetMusicVolume(clip->music, 1.0f);
+    PlayMusicStream(clip->music);
     clip->paused = false;
-    clip->paused_position_seconds = 0.0f;
-    clip->playback_started_at =
-        platform_monotonic_seconds();
     return true;
 }
 
 bool audio_clip_pause(AudioClip *clip) {
     if (clip == NULL || !clip->loaded || clip->paused ||
-        !IsSoundPlaying(clip->sound)) {
+        !IsMusicStreamPlaying(clip->music)) {
         return false;
     }
 
-    clip->paused_position_seconds +=
-        (float)(platform_monotonic_seconds() -
-                clip->playback_started_at);
-    if (clip->paused_position_seconds > clip->duration_seconds) {
-        clip->paused_position_seconds = clip->duration_seconds;
-    }
-    PauseSound(clip->sound);
+    PauseMusicStream(clip->music);
     clip->paused = true;
     return true;
 }
@@ -130,10 +168,12 @@ bool audio_clip_resume(AudioClip *clip) {
         return false;
     }
 
-    ResumeSound(clip->sound);
+    if (audio_clip_position_seconds(clip) >=
+        clip->duration_seconds - 0.001f) {
+        SeekMusicStream(clip->music, 0.0f);
+    }
+    ResumeMusicStream(clip->music);
     clip->paused = false;
-    clip->playback_started_at =
-        platform_monotonic_seconds();
     return true;
 }
 
@@ -142,15 +182,42 @@ void audio_clip_stop(AudioClip *clip) {
         return;
     }
 
-    StopSound(clip->sound);
+    StopMusicStream(clip->music);
     clip->paused = false;
-    clip->paused_position_seconds = 0.0f;
-    clip->playback_started_at = 0.0;
+}
+
+bool audio_clip_seek(AudioClip *clip, float position_seconds) {
+    if (clip == NULL || !clip->loaded) {
+        return false;
+    }
+
+    const float position =
+        clampf(position_seconds, 0.0f, clip->duration_seconds);
+    const bool was_playing = audio_clip_is_playing(clip);
+    const bool was_paused = audio_clip_is_paused(clip);
+    if (!was_playing && !was_paused) {
+        PlayMusicStream(clip->music);
+    }
+    SeekMusicStream(clip->music, position);
+    if (was_playing) {
+        clip->paused = false;
+    } else {
+        PauseMusicStream(clip->music);
+        clip->paused = true;
+    }
+    return true;
+}
+
+void audio_clip_update(AudioClip *clip) {
+    if (clip != NULL && clip->loaded && !clip->paused &&
+        IsMusicStreamPlaying(clip->music)) {
+        UpdateMusicStream(clip->music);
+    }
 }
 
 bool audio_clip_is_playing(const AudioClip *clip) {
     return clip != NULL && clip->loaded && !clip->paused &&
-           IsSoundPlaying(clip->sound);
+           IsMusicStreamPlaying(clip->music);
 }
 
 bool audio_clip_is_paused(const AudioClip *clip) {
@@ -165,17 +232,12 @@ float audio_clip_position_seconds(const AudioClip *clip) {
     if (clip == NULL || !clip->loaded) {
         return 0.0f;
     }
-    if (clip->paused) {
-        return clip->paused_position_seconds;
-    }
-    if (!IsSoundPlaying(clip->sound)) {
+    if (!clip->paused &&
+        !IsMusicStreamPlaying(clip->music)) {
         return 0.0f;
     }
 
-    float position =
-        clip->paused_position_seconds +
-        (float)(platform_monotonic_seconds() -
-                clip->playback_started_at);
+    float position = GetMusicTimePlayed(clip->music);
     if (position < 0.0f) position = 0.0f;
     if (position > clip->duration_seconds) position = clip->duration_seconds;
     return position;
@@ -191,8 +253,9 @@ void audio_clip_unload(AudioClip *clip) {
     }
 
     if (clip->loaded) {
-        UnloadSound(clip->sound);
+        UnloadMusicStream(clip->music);
     }
+    free(clip->encoded_data);
     *clip = (AudioClip){0};
 }
 

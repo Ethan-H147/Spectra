@@ -708,6 +708,10 @@ void SpectraController::toggleSynthPlayback() {
     emit playbackChanged();
 }
 
+void SpectraController::seekSynthPlayback(double position) {
+    seekClip(&synthClip_, SynthPlayback, position);
+}
+
 void SpectraController::toggleSourcePlayback() {
     if (!sourceLoaded()) {
         return;
@@ -727,6 +731,10 @@ void SpectraController::toggleSourcePlayback() {
         }
     }
     emit playbackChanged();
+}
+
+void SpectraController::seekSourcePlayback(double position) {
+    seekClip(&sourceClip_, SourcePlayback, position);
 }
 
 void SpectraController::setRegionStart(double start) {
@@ -848,6 +856,14 @@ void SpectraController::toggleRegionPlayback() {
     emit playbackChanged();
 }
 
+void SpectraController::seekRegionPlayback(double position) {
+    if (!analysisReady_) {
+        return;
+    }
+    lastLabPlaybackTarget_ = RegionPlayback;
+    seekClip(&regionClip_, RegionPlayback, position);
+}
+
 void SpectraController::playHarmonicModel() {
     if (!audioReady_ || !harmonicReady()) {
         return;
@@ -934,6 +950,26 @@ void SpectraController::toggleLabPlayback() {
             playRegion();
             break;
     }
+}
+
+void SpectraController::seekLabPlayback(double position) {
+    AudioClip *clip = nullptr;
+    switch (lastLabPlaybackTarget_) {
+        case HarmonicPlayback:
+            clip = &harmonicClip_;
+            break;
+        case OriginalFramePlayback:
+            clip = &originalFrameClip_;
+            break;
+        case FourierFramePlayback:
+            clip = &fourierClip_;
+            break;
+        case RegionPlayback:
+        default:
+            clip = &regionClip_;
+            break;
+    }
+    seekClip(clip, lastLabPlaybackTarget_, position);
 }
 
 void SpectraController::rebuildFourierFrame(int componentCount) {
@@ -1282,6 +1318,23 @@ void SpectraController::toggleFullFilePlayback() {
         return;
     }
     emit playbackChanged();
+}
+
+void SpectraController::seekFullFilePlayback(double position) {
+    PlaybackTarget target = playbackTarget_;
+    AudioClip *clip = nullptr;
+    if (target == FullFilePlayback) {
+        clip = &fullFileClip_;
+    } else if (target == SourcePlayback) {
+        clip = &sourceClip_;
+    } else if (fullFileReady()) {
+        target = FullFilePlayback;
+        clip = &fullFileClip_;
+    } else {
+        target = SourcePlayback;
+        clip = &sourceClip_;
+    }
+    seekClip(clip, target, position);
 }
 
 bool SpectraController::exportFullFileFile(const QUrl &url) {
@@ -2391,7 +2444,27 @@ void SpectraController::finishFullFileReconstruction(
     emit playbackChanged();
 }
 
+void SpectraController::seekClip(
+    AudioClip *clip,
+    PlaybackTarget target,
+    double position) {
+    if (clip == nullptr ||
+        audio_clip_duration_seconds(clip) <= 0.0f) {
+        return;
+    }
+    if (playbackTarget_ != target) {
+        haltAllAudio();
+        playbackTarget_ = target;
+    }
+    if (audio_clip_seek(
+            clip,
+            static_cast<float>(position))) {
+        emit playbackChanged();
+    }
+}
+
 void SpectraController::refreshPlaybackState() {
+    audio_clip_update(activeClip());
     if (playbackTarget_ != NoPlayback && activeClip() != nullptr &&
         !audio_clip_is_active(activeClip())) {
         playbackTarget_ = NoPlayback;

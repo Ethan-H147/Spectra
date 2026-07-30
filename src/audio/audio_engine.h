@@ -7,12 +7,12 @@
 #include <stdbool.h>
 
 typedef struct {
-    Sound sound;
+    Music music;
+    unsigned char *encoded_data;
+    int encoded_size;
     bool loaded;
     bool paused;
     float duration_seconds;
-    float paused_position_seconds;
-    double playback_started_at;
 } AudioClip;
 
 void audio_clip_init(AudioClip *clip);
@@ -23,6 +23,8 @@ bool audio_clip_play(AudioClip *clip);
 bool audio_clip_pause(AudioClip *clip);
 bool audio_clip_resume(AudioClip *clip);
 void audio_clip_stop(AudioClip *clip);
+bool audio_clip_seek(AudioClip *clip, float position_seconds);
+void audio_clip_update(AudioClip *clip);
 bool audio_clip_is_playing(const AudioClip *clip);
 bool audio_clip_is_paused(const AudioClip *clip);
 bool audio_clip_is_active(const AudioClip *clip);

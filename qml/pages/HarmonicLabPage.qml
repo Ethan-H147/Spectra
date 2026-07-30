@@ -118,6 +118,9 @@ Item {
                     : spectra.regionDuration
                 onToggleRequested: spectra.toggleLabPlayback()
                 onStopRequested: spectra.stopPlayback()
+                onSeekRequested: function(position) {
+                    spectra.seekLabPlayback(position)
+                }
             }
 
             GridLayout {

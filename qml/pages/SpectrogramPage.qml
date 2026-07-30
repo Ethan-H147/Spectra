@@ -340,6 +340,9 @@ Item {
                             : spectra.sourceDuration
                         onToggleRequested: spectra.toggleFullFilePlayback()
                         onStopRequested: spectra.stopPlayback()
+                        onSeekRequested: function(position) {
+                            spectra.seekFullFilePlayback(position)
+                        }
                     }
 
                     Rectangle {

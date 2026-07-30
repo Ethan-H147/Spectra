@@ -61,6 +61,9 @@ ScrollView {
                     duration: spectra.synthDuration
                     onToggleRequested: spectra.toggleSynthPlayback()
                     onStopRequested: spectra.stopPlayback()
+                    onSeekRequested: function(position) {
+                        spectra.seekSynthPlayback(position)
+                    }
                 }
 
                 ColumnLayout {

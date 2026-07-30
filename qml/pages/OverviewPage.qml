@@ -154,6 +154,9 @@ Item {
                             duration: spectra.sourceDuration
                             onToggleRequested: spectra.toggleSourcePlayback()
                             onStopRequested: spectra.stopPlayback()
+                            onSeekRequested: function(position) {
+                                spectra.seekSourcePlayback(position)
+                            }
                         }
 
                         AppButton {

@@ -80,7 +80,7 @@ Rectangle {
                 color: "transparent"
                 border.width: 1
                 border.color: theme.accent
-                visible: segment.activeFocus
+                visible: segmentHover.hovered
             }
 
             Text {
