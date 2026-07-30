@@ -763,18 +763,11 @@ ScrollView {
                         spacing: theme.space1
                         visible: spectra.analysisReady
 
-                        Repeater {
-                            model: ["Interpolated", "FFT bins"]
-
-                            AppButton {
-                                required property int index
-                                required property string modelData
-
-                                compact: true
-                                quiet: spectra.analysisPeakReadoutMode !== index
-                                text: modelData
-                                onClicked:
-                                    spectra.setAnalysisPeakReadoutMode(index)
+                        SegmentedSwitch {
+                            options: ["Interpolated", "FFT bins"]
+                            currentIndex: spectra.analysisPeakReadoutMode
+                            onActivated: function(index) {
+                                spectra.setAnalysisPeakReadoutMode(index)
                             }
                         }
 

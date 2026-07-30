@@ -173,6 +173,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
             qml/components/AppButton.qml
             qml/components/MetricCard.qml
             qml/components/Panel.qml
+            qml/components/SegmentedSwitch.qml
             qml/components/StatusRow.qml
             qml/components/TransportPlayer.qml
             qml/components/WorkspaceCard.qml

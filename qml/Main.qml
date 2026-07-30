@@ -348,7 +348,7 @@ ApplicationWindow {
         spacing: 0
 
         Rectangle {
-            Layout.preferredWidth: 280
+            Layout.preferredWidth: 240
             Layout.fillHeight: true
             color: theme.sidebar
             border.width: 0
@@ -420,7 +420,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.leftMargin: 8
                         Layout.rightMargin: 8
-                        Layout.preferredHeight: 56
+                        Layout.preferredHeight: 40
                         radius: 3
                         color: spectra.currentPage === index
                             ? theme.raisedPanel
@@ -484,15 +484,25 @@ ApplicationWindow {
                     Layout.leftMargin: 8
                     Layout.rightMargin: 8
                     Layout.bottomMargin: theme.space2
-                    Layout.preferredHeight: 56
+                    Layout.preferredHeight: 40
                     radius: 3
                     color: spectra.currentPage === 5
                         ? theme.raisedPanel
                         : (settingsHover.hovered ? Qt.lighter(theme.sidebar, 1.15) : "transparent")
 
+                    Rectangle {
+                        visible: spectra.currentPage === 5
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: 4
+                        color: theme.accent
+                    }
+
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 12
+                        anchors.rightMargin: 12
                         spacing: 12
 
                         Text {
@@ -503,6 +513,7 @@ ApplicationWindow {
                         }
 
                         Text {
+                            Layout.fillWidth: true
                             text: "Settings"
                             color: spectra.currentPage === 5 ? theme.text : theme.muted
                             font.family: theme.bodyFamily
