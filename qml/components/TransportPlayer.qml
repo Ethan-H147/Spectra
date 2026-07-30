@@ -32,6 +32,7 @@ Rectangle {
         id: playerButton
 
         property bool primary: false
+        property bool pauseIcon: false
         property string accessibleName: ""
 
         implicitWidth: 36
@@ -40,16 +41,39 @@ Rectangle {
 
         Accessible.name: accessibleName
 
-        contentItem: Text {
-            text: playerButton.text
-            color: playerButton.enabled
-                ? theme.text
-                : theme.quiet
-            font.family: "Segoe UI Symbol"
-            font.pixelSize: theme.fontSize(13)
-            font.weight: Font.DemiBold
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+        contentItem: Item {
+            Text {
+                anchors.fill: parent
+                visible: !playerButton.pauseIcon
+                text: playerButton.text
+                color: playerButton.enabled
+                    ? theme.text
+                    : theme.quiet
+                font.family: "Segoe UI Symbol"
+                font.pixelSize: theme.fontSize(13)
+                font.weight: Font.DemiBold
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            Row {
+                anchors.centerIn: parent
+                visible: playerButton.pauseIcon
+                spacing: 3
+
+                Repeater {
+                    model: 2
+
+                    Rectangle {
+                        width: 3
+                        height: 12
+                        radius: 1
+                        color: playerButton.enabled
+                            ? theme.text
+                            : theme.quiet
+                    }
+                }
+            }
         }
 
         background: Rectangle {
@@ -99,7 +123,8 @@ Rectangle {
 
         PlayerButton {
             primary: true
-            text: root.playing ? "Ⅱ" : "▶"
+            text: "▶"
+            pauseIcon: root.playing
             accessibleName: root.playing ? "Pause" : "Play"
             onClicked: root.toggleRequested()
         }
