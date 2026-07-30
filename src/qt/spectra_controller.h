@@ -257,7 +257,7 @@ private:
     int currentPage_ = 0;
     bool audioReady_ = false;
     QString statusText_;
-    double textScale_ = 1.10;
+    double textScale_ = 1.00;
 
     double synthFrequency_ = 440.0;
     double synthDuration_ = 1.2;

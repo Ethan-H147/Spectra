@@ -1,7 +1,7 @@
 import QtQuick
 
 QtObject {
-    readonly property real legacyTypeScale: 1.85 * spectra.textScale
+    readonly property real typeScale: 1.10 * spectra.textScale
 
     readonly property int space1: 8
     readonly property int space2: 16
@@ -28,6 +28,6 @@ QtObject {
     readonly property string headingFamily: "Segoe UI Semibold"
 
     function fontSize(legacySize) {
-        return Math.round(legacySize * legacyTypeScale)
+        return Math.round(legacySize * typeScale)
     }
 }
