@@ -206,6 +206,28 @@ if(SPECTRA_BUILD_QT_FRONTEND)
                 assets/spectra-logo.svg
         )
 
+        if(WIN32)
+            add_custom_command(
+                TARGET spectra_qt
+                POST_BUILD
+                COMMAND
+                    "$<TARGET_FILE:Qt6::windeployqt>"
+                    --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml"
+                    --dir "."
+                    --qml-deploy-dir "Qt6/qml"
+                    --no-translations
+                    "$<TARGET_FILE_NAME:spectra_qt>"
+                COMMAND
+                    "${CMAKE_COMMAND}"
+                    -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/qt.conf"
+                    "$<TARGET_FILE_DIR:spectra_qt>/qt.conf"
+                WORKING_DIRECTORY "$<TARGET_FILE_DIR:spectra_qt>"
+                COMMENT "Deploying the Qt runtime beside spectra_qt"
+                VERBATIM
+            )
+        endif()
+
         include(GNUInstallDirs)
         install(
             TARGETS spectra_qt
