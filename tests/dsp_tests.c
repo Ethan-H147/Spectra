@@ -283,6 +283,45 @@ static int test_global_fourier_fixed_components(void) {
             0.10f * sinf(2.0f * 3.14159265358979323846f * 200.0f * time - 0.7f);
     }
     SampleBuffer source = {samples, count, sample_rate};
+    GlobalFourierJob limited_job;
+    global_fourier_job_init(&limited_job);
+    ASSERT_TRUE(
+        global_fourier_job_begin_analysis(
+            &limited_job,
+            &source,
+            3),
+        "limited whole-file analysis should initialize");
+    ASSERT_TRUE(
+        finish_global_fourier_job(
+            &limited_job,
+            31U) &&
+            limited_job.analysis_ready &&
+            limited_job.component_count == 3,
+        "limited whole-file analysis should retain only its requested strongest bins");
+    ASSERT_TRUE(
+        limited_job.components[0].bin == 32U &&
+            limited_job.components[1].bin == 96U &&
+            limited_job.components[2].bin == 200U,
+        "limited whole-file analysis should preserve the strongest-bin ranking");
+    ASSERT_TRUE(
+        global_fourier_job_begin_reconstruction(
+            &limited_job,
+            3) &&
+            finish_global_fourier_job(
+                &limited_job,
+                29U),
+        "limited whole-file analysis should reconstruct from its retained bins");
+    SampleBuffer limited_output =
+        global_fourier_job_take_output(
+            &limited_job);
+    ASSERT_TRUE(
+        root_mean_square_error(
+            &source,
+            &limited_output) < 0.00002f,
+        "limited strongest-bin analysis should reconstruct the known three-tone source");
+    sample_buffer_free(&limited_output);
+    global_fourier_job_free(&limited_job);
+
     GlobalFourierJob job;
     global_fourier_job_init(&job);
     ASSERT_TRUE(global_fourier_available_component_count(count) == 513,

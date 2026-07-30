@@ -289,6 +289,12 @@ private:
     bool startGlobalAnalysis();
     bool startGlobalReconstruction();
     bool startStftReconstruction();
+    static void processGlobalFullFileInBackground(
+        BackgroundTaskControl *control,
+        void *context);
+    static void processStftFullFileInBackground(
+        BackgroundTaskControl *control,
+        void *context);
     void processFullFileWork();
     void finishSpectrogramBuild();
     void finishFullFileReconstruction(
@@ -296,6 +302,8 @@ private:
         SampleBuffer right,
         unsigned int channelCount,
         double retainedEnergy);
+    int requiredGlobalAnalysisComponents() const;
+    bool hasReusableGlobalAnalysis() const;
     unsigned int fullFileReconstructionChannels() const;
     void seekClip(
         AudioClip *clip,
@@ -361,6 +369,7 @@ private:
 
     StftReconstructionJob spectrogramJob_ = {};
     BackgroundTask spectrogramTask_ = {};
+    BackgroundTask fullFileTask_ = {};
     GlobalFourierJob globalFourierJob_ = {};
     GlobalFourierJob globalFourierJobRight_ = {};
     StftReconstructionJob fullFileStftJob_ = {};
@@ -369,6 +378,7 @@ private:
     InterleavedBuffer fullFileBuffer_ = {};
     AudioClip fullFileClip_ = {};
     FullFileWork fullFileWork_ = FullFileIdle;
+    unsigned int fullFileWorkerChannels_ = 1U;
     int fullFileMode_ = 0;
     int fullFileChannelMode_ = 0;
     int fullFileSelectionMode_ = 0;

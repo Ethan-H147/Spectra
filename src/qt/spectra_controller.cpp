@@ -34,8 +34,8 @@ constexpr unsigned int kSpectrogramTimeBins = 256U;
 constexpr unsigned int kSpectrogramFrequencyBins = 128U;
 constexpr float kSpectrogramMaximumFrequency = 12000.0f;
 constexpr double kFullFileMaximumDuration = 600.0;
-constexpr size_t kGlobalOperationsPerTick = 65536U;
-constexpr size_t kStftFramesPerTick = 16U;
+constexpr size_t kGlobalOperationsPerBatch = 65536U;
+constexpr size_t kStftFramesPerBatch = 2U;
 constexpr size_t kSpectrogramFramesPerBatch = 32U;
 constexpr size_t kReconstructionCacheLimit =
     256U * 1024U * 1024U;
@@ -98,6 +98,92 @@ void buildSpectrogramInBackground(
 }
 }  // namespace
 
+void SpectraController::processGlobalFullFileInBackground(
+    BackgroundTaskControl *control,
+    void *context) {
+    auto *controller =
+        static_cast<SpectraController *>(context);
+    if (controller == nullptr) {
+        return;
+    }
+
+    for (;;) {
+        if (background_task_cancel_requested(control)) {
+            break;
+        }
+        bool anyActive = false;
+        double progress = 0.0;
+        for (unsigned int channel = 0U;
+             channel < controller->fullFileWorkerChannels_;
+             ++channel) {
+            GlobalFourierJob *job =
+                channel == 0U
+                    ? &controller->globalFourierJob_
+                    : &controller->globalFourierJobRight_;
+            if (job->active) {
+                anyActive = true;
+                global_fourier_job_process(
+                    job,
+                    kGlobalOperationsPerBatch);
+            }
+            progress +=
+                global_fourier_job_progress(job);
+        }
+        background_task_report_progress(
+            control,
+            static_cast<float>(
+                progress /
+                static_cast<double>(
+                    controller->fullFileWorkerChannels_)));
+        if (!anyActive) {
+            break;
+        }
+    }
+}
+
+void SpectraController::processStftFullFileInBackground(
+    BackgroundTaskControl *control,
+    void *context) {
+    auto *controller =
+        static_cast<SpectraController *>(context);
+    if (controller == nullptr) {
+        return;
+    }
+
+    for (;;) {
+        if (background_task_cancel_requested(control)) {
+            break;
+        }
+        bool anyActive = false;
+        double progress = 0.0;
+        for (unsigned int channel = 0U;
+             channel < controller->fullFileWorkerChannels_;
+             ++channel) {
+            StftReconstructionJob *job =
+                channel == 0U
+                    ? &controller->fullFileStftJob_
+                    : &controller->fullFileStftJobRight_;
+            if (job->active) {
+                anyActive = true;
+                stft_reconstruction_job_process(
+                    job,
+                    kStftFramesPerBatch);
+            }
+            progress +=
+                stft_reconstruction_job_progress(job);
+        }
+        background_task_report_progress(
+            control,
+            static_cast<float>(
+                progress /
+                static_cast<double>(
+                    controller->fullFileWorkerChannels_)));
+        if (!anyActive) {
+            break;
+        }
+    }
+}
+
 SpectraController::SpectraController(QObject *parent)
     : QObject(parent) {
     audio_clip_init(&synthClip_);
@@ -112,6 +198,7 @@ SpectraController::SpectraController(QObject *parent)
     global_fourier_job_init(&globalFourierJobRight_);
     stft_reconstruction_job_init(&spectrogramJob_);
     background_task_init(&spectrogramTask_);
+    background_task_init(&fullFileTask_);
     stft_reconstruction_job_init(&fullFileStftJob_);
     stft_reconstruction_job_init(&fullFileStftJobRight_);
     reconstruction_cache_init(
@@ -150,6 +237,7 @@ SpectraController::SpectraController(QObject *parent)
 SpectraController::~SpectraController() {
     fullFileTimer_.stop();
     background_task_cancel_and_join(&spectrogramTask_);
+    background_task_cancel_and_join(&fullFileTask_);
     audio_clip_unload(&fullFileClip_);
     interleaved_buffer_free(&fullFileBuffer_);
     reconstruction_cache_free(&reconstructionCache_);
@@ -494,14 +582,13 @@ qulonglong SpectraController::fullFileEstimatedMonoBytes() const {
     if (!sourceLoaded()) {
         return 0;
     }
-    const int maximum =
-        global_fourier_available_component_count(
-            importedAudio_.mono.count);
-    return maximum > 0
+    const int componentCapacity =
+        requiredGlobalAnalysisComponents();
+    return componentCapacity > 0
         ? static_cast<qulonglong>(
               global_fourier_estimated_multichannel_analysis_bytes(
                   importedAudio_.mono.count,
-                  maximum,
+                  componentCapacity,
                   1U))
         : 0;
 }
@@ -510,19 +597,18 @@ qulonglong SpectraController::fullFileEstimatedSourceBytes() const {
     if (!sourceLoaded()) {
         return 0;
     }
-    const int maximum =
-        global_fourier_available_component_count(
-            importedAudio_.mono.count);
+    const int componentCapacity =
+        requiredGlobalAnalysisComponents();
     const unsigned int channels =
         importedAudio_.source_channels == 2U &&
                 importedAudio_.interleaved.channel_count == 2U
             ? 2U
             : 1U;
-    return maximum > 0
+    return componentCapacity > 0
         ? static_cast<qulonglong>(
               global_fourier_estimated_multichannel_analysis_bytes(
                   importedAudio_.mono.count,
-                  maximum,
+                  componentCapacity,
                   channels))
         : 0;
 }
@@ -552,9 +638,6 @@ int SpectraController::fullFileSelectedComponents() const {
 int SpectraController::fullFileMaximumComponents() const {
     if (fullFileMode_ == 1) {
         return static_cast<int>(kFullFileWindowSize / 2U - 1U);
-    }
-    if (globalFourierJob_.maximum_component_count > 0) {
-        return globalFourierJob_.maximum_component_count;
     }
     if (!sourceLoaded()) {
         return 1;
@@ -1047,6 +1130,7 @@ void SpectraController::setFullFileMode(int mode) {
 
     cacheFullFileOutput();
     fullFileTimer_.stop();
+    background_task_cancel_and_join(&fullFileTask_);
     if (fullFileWork_ == SpectrogramBuild) {
         background_task_cancel_and_join(&spectrogramTask_);
         stft_reconstruction_job_free(&spectrogramJob_);
@@ -1069,7 +1153,7 @@ void SpectraController::setFullFileMode(int mode) {
     if (fullFileMode_ == 0) {
         fullFileSelectedComponents_ = globalSelectedComponents_;
         if (fullFileSelectionMode_ == 1 &&
-            globalFourierJob_.analysis_ready) {
+            hasReusableGlobalAnalysis()) {
             int resolved =
                 global_fourier_job_component_count_for_energy(
                     &globalFourierJob_,
@@ -1147,7 +1231,7 @@ void SpectraController::setFullFileSelectionMode(int mode) {
     fullFileSelectionMode_ = bounded;
     if (fullFileSelectionMode_ == 0) {
         fullFileSelectedComponents_ = globalSelectedComponents_;
-    } else if (globalFourierJob_.analysis_ready) {
+    } else if (hasReusableGlobalAnalysis()) {
         int resolved =
             global_fourier_job_component_count_for_energy(
                 &globalFourierJob_,
@@ -1188,7 +1272,7 @@ void SpectraController::setFullFileEnergyTarget(double target) {
     cacheFullFileOutput();
     clearFullFileOutput();
     fullFileSelectionMode_ = 1;
-    if (globalFourierJob_.analysis_ready) {
+    if (hasReusableGlobalAnalysis()) {
         int resolved =
             global_fourier_job_component_count_for_energy(
                 &globalFourierJob_,
@@ -1278,7 +1362,7 @@ void SpectraController::buildFullFileModel() {
     }
     const bool started =
         fullFileMode_ == 0
-            ? (globalFourierJob_.analysis_ready
+            ? (hasReusableGlobalAnalysis()
                    ? startGlobalReconstruction()
                    : startGlobalAnalysis())
             : startStftReconstruction();
@@ -1801,6 +1885,7 @@ void SpectraController::resetAnalysis() {
 void SpectraController::resetFullFile() {
     fullFileTimer_.stop();
     background_task_cancel_and_join(&spectrogramTask_);
+    background_task_cancel_and_join(&fullFileTask_);
     fullFileWork_ = FullFileIdle;
     stft_reconstruction_job_free(&fullFileStftJobRight_);
     stft_reconstruction_job_init(&fullFileStftJobRight_);
@@ -1976,6 +2061,37 @@ unsigned int SpectraController::fullFileReconstructionChannels() const {
         : 1U;
 }
 
+int SpectraController::requiredGlobalAnalysisComponents() const {
+    if (!sourceLoaded()) {
+        return 1;
+    }
+    const int available =
+        std::max(
+            1,
+            global_fourier_available_component_count(
+                importedAudio_.mono.count));
+    return fullFileSelectionMode_ == 1
+        ? available
+        : std::max(
+              1,
+              std::min(
+                  fullFileSelectedComponents_,
+                  available));
+}
+
+bool SpectraController::hasReusableGlobalAnalysis() const {
+    const unsigned int channelCount =
+        fullFileReconstructionChannels();
+    const int required =
+        requiredGlobalAnalysisComponents();
+    return globalFourierJob_.analysis_ready &&
+        globalFourierJob_.maximum_component_count >= required &&
+        (channelCount == 1U ||
+         (globalFourierJobRight_.analysis_ready &&
+          globalFourierJobRight_.maximum_component_count >=
+              required));
+}
+
 bool SpectraController::startGlobalAnalysis() {
     const unsigned int channelCount =
         fullFileReconstructionChannels();
@@ -1985,16 +2101,18 @@ bool SpectraController::startGlobalAnalysis() {
         setStatusText(QStringLiteral("Could not determine the whole-file FFT grid"));
         return false;
     }
+    const int componentCapacity =
+        requiredGlobalAnalysisComponents();
     if (!global_fourier_analysis_fits_memory(
             importedAudio_.mono.count,
-            available,
+            componentCapacity,
             channelCount,
             static_cast<size_t>(fullFileMemoryLimitBytes_))) {
         const double estimatedMegabytes =
             static_cast<double>(
                 global_fourier_estimated_multichannel_analysis_bytes(
                     importedAudio_.mono.count,
-                    available,
+                    componentCapacity,
                     channelCount)) /
             (1024.0 * 1024.0);
         const double limitMegabytes =
@@ -2010,6 +2128,7 @@ bool SpectraController::startGlobalAnalysis() {
         return false;
     }
 
+    background_task_cancel_and_join(&fullFileTask_);
     global_fourier_job_free(&globalFourierJob_);
     global_fourier_job_init(&globalFourierJob_);
     global_fourier_job_free(&globalFourierJobRight_);
@@ -2023,7 +2142,7 @@ bool SpectraController::startGlobalAnalysis() {
             importedAudio_.interleaved.frame_count,
             2U,
             importedAudio_.interleaved.sample_rate,
-            available);
+            componentCapacity);
         if (started) {
             started = global_fourier_job_begin_analysis_strided(
                 &globalFourierJobRight_,
@@ -2031,13 +2150,13 @@ bool SpectraController::startGlobalAnalysis() {
                 importedAudio_.interleaved.frame_count,
                 2U,
                 importedAudio_.interleaved.sample_rate,
-                available);
+                componentCapacity);
         }
     } else {
         started = global_fourier_job_begin_analysis(
             &globalFourierJob_,
             &importedAudio_.mono,
-            available);
+            componentCapacity);
     }
     if (!started) {
         global_fourier_job_free(&globalFourierJob_);
@@ -2051,8 +2170,31 @@ bool SpectraController::startGlobalAnalysis() {
         std::max(1, std::min(fullFileSelectedComponents_, available));
     globalSelectedComponents_ = fullFileSelectedComponents_;
     fullFileProgress_ = 0.0;
+    fullFileWorkerChannels_ = channelCount;
     fullFileWork_ = GlobalAnalysis;
-    setStatusText(QStringLiteral("Ranking the whole-file FFT components"));
+    if (!background_task_start(
+            &fullFileTask_,
+            processGlobalFullFileInBackground,
+            this)) {
+        global_fourier_job_free(&globalFourierJob_);
+        global_fourier_job_init(&globalFourierJob_);
+        global_fourier_job_free(&globalFourierJobRight_);
+        global_fourier_job_init(&globalFourierJobRight_);
+        fullFileWork_ = FullFileIdle;
+        setStatusText(
+            QStringLiteral(
+                "Could not start the background Fourier worker"));
+        return false;
+    }
+    setStatusText(
+        fullFileSelectionMode_ == 1
+            ? QStringLiteral(
+                  "Ranking all %1 whole-file FFT bins")
+                  .arg(available)
+            : QStringLiteral(
+                  "Finding the strongest %1 of %2 whole-file FFT bins")
+                  .arg(componentCapacity)
+                  .arg(available));
     fullFileTimer_.start();
     emit fullFileChanged();
     return true;
@@ -2061,9 +2203,7 @@ bool SpectraController::startGlobalAnalysis() {
 bool SpectraController::startGlobalReconstruction() {
     const unsigned int channelCount =
         fullFileReconstructionChannels();
-    if (!globalFourierJob_.analysis_ready ||
-        (channelCount == 2U &&
-         !globalFourierJobRight_.analysis_ready)) {
+    if (!hasReusableGlobalAnalysis()) {
         return false;
     }
     const int maximum = std::max(1, globalFourierJob_.maximum_component_count);
@@ -2091,6 +2231,7 @@ bool SpectraController::startGlobalReconstruction() {
     if (fullFileSelectionMode_ == 0) {
         globalSelectedComponents_ = fullFileSelectedComponents_;
     }
+    background_task_cancel_and_join(&fullFileTask_);
     bool started = global_fourier_job_begin_reconstruction(
             &globalFourierJob_,
             fullFileSelectedComponents_);
@@ -2108,7 +2249,22 @@ bool SpectraController::startGlobalReconstruction() {
         return false;
     }
     fullFileProgress_ = 0.0;
+    fullFileWorkerChannels_ = channelCount;
     fullFileWork_ = GlobalReconstruction;
+    if (!background_task_start(
+            &fullFileTask_,
+            processGlobalFullFileInBackground,
+            this)) {
+        global_fourier_job_free(&globalFourierJob_);
+        global_fourier_job_init(&globalFourierJob_);
+        global_fourier_job_free(&globalFourierJobRight_);
+        global_fourier_job_init(&globalFourierJobRight_);
+        fullFileWork_ = FullFileIdle;
+        setStatusText(
+            QStringLiteral(
+                "Could not start the background reconstruction worker"));
+        return false;
+    }
     setStatusText(
         fullFileSelectionMode_ == 1
             ? QStringLiteral(
@@ -2126,6 +2282,7 @@ bool SpectraController::startGlobalReconstruction() {
 bool SpectraController::startStftReconstruction() {
     const unsigned int channelCount =
         fullFileReconstructionChannels();
+    background_task_cancel_and_join(&fullFileTask_);
     stft_reconstruction_job_free(&fullFileStftJob_);
     stft_reconstruction_job_init(&fullFileStftJob_);
     stft_reconstruction_job_free(&fullFileStftJobRight_);
@@ -2187,7 +2344,22 @@ bool SpectraController::startStftReconstruction() {
     fullFileFrameCount_ =
         static_cast<qsizetype>(fullFileStftJob_.frame_count);
     fullFileProgress_ = 0.0;
+    fullFileWorkerChannels_ = channelCount;
     fullFileWork_ = StftReconstruction;
+    if (!background_task_start(
+            &fullFileTask_,
+            processStftFullFileInBackground,
+            this)) {
+        stft_reconstruction_job_free(&fullFileStftJob_);
+        stft_reconstruction_job_init(&fullFileStftJob_);
+        stft_reconstruction_job_free(&fullFileStftJobRight_);
+        stft_reconstruction_job_init(&fullFileStftJobRight_);
+        fullFileWork_ = FullFileIdle;
+        setStatusText(
+            QStringLiteral(
+                "Could not start the background STFT worker"));
+        return false;
+    }
     setStatusText(
         QStringLiteral("Reconstructing each STFT frame from its top %1 components")
             .arg(fullFileSelectedComponents_));
@@ -2219,25 +2391,18 @@ void SpectraController::processFullFileWork() {
 
     if (fullFileWork_ == GlobalAnalysis ||
         fullFileWork_ == GlobalReconstruction) {
-        const unsigned int channelCount =
-            fullFileReconstructionChannels();
-        global_fourier_job_process(
-            &globalFourierJob_,
-            kGlobalOperationsPerTick);
-        if (channelCount == 2U) {
-            global_fourier_job_process(
-                &globalFourierJobRight_,
-                kGlobalOperationsPerTick);
-        }
-        const double leftProgress =
-            global_fourier_job_progress(&globalFourierJob_);
-        const double rightProgress =
-            channelCount == 2U
-                ? global_fourier_job_progress(
-                      &globalFourierJobRight_)
-                : leftProgress;
         fullFileProgress_ =
-            (leftProgress + rightProgress) * 0.5;
+            background_task_progress(&fullFileTask_);
+        if (!background_task_is_complete(&fullFileTask_)) {
+            emit fullFileChanged();
+            return;
+        }
+
+        const FullFileWork completedWork =
+            fullFileWork_;
+        const unsigned int channelCount =
+            fullFileWorkerChannels_;
+        background_task_join(&fullFileTask_);
         if (globalFourierJob_.phase == GLOBAL_FOURIER_FAILED ||
             (channelCount == 2U &&
              globalFourierJobRight_.phase ==
@@ -2248,7 +2413,7 @@ void SpectraController::processFullFileWork() {
             emit fullFileChanged();
             return;
         }
-        if (fullFileWork_ == GlobalAnalysis &&
+        if (completedWork == GlobalAnalysis &&
             globalFourierJob_.analysis_ready &&
             (channelCount == 1U ||
              globalFourierJobRight_.analysis_ready)) {
@@ -2259,7 +2424,7 @@ void SpectraController::processFullFileWork() {
             }
             return;
         }
-        if (fullFileWork_ == GlobalReconstruction &&
+        if (completedWork == GlobalReconstruction &&
             globalFourierJob_.reconstruction_ready &&
             (channelCount == 1U ||
              globalFourierJobRight_.reconstruction_ready)) {
@@ -2293,31 +2458,29 @@ void SpectraController::processFullFileWork() {
                 retainedEnergy);
             return;
         }
+        fullFileTimer_.stop();
+        fullFileWork_ = FullFileIdle;
+        setStatusText(
+            completedWork == GlobalAnalysis
+                ? QStringLiteral(
+                      "Background whole-file Fourier analysis did not complete")
+                : QStringLiteral(
+                      "Background whole-file reconstruction did not complete"));
         emit fullFileChanged();
         return;
     }
 
     if (fullFileWork_ == StftReconstruction) {
-        const unsigned int channelCount =
-            fullFileReconstructionChannels();
-        stft_reconstruction_job_process(
-            &fullFileStftJob_,
-            kStftFramesPerTick);
-        if (channelCount == 2U) {
-            stft_reconstruction_job_process(
-                &fullFileStftJobRight_,
-                kStftFramesPerTick);
-        }
-        const double leftProgress =
-            stft_reconstruction_job_progress(
-                &fullFileStftJob_);
-        const double rightProgress =
-            channelCount == 2U
-                ? stft_reconstruction_job_progress(
-                      &fullFileStftJobRight_)
-                : leftProgress;
         fullFileProgress_ =
-            (leftProgress + rightProgress) * 0.5;
+            background_task_progress(&fullFileTask_);
+        if (!background_task_is_complete(&fullFileTask_)) {
+            emit fullFileChanged();
+            return;
+        }
+
+        const unsigned int channelCount =
+            fullFileWorkerChannels_;
+        background_task_join(&fullFileTask_);
         if (fullFileStftJob_.failed ||
             (channelCount == 2U &&
              fullFileStftJobRight_.failed)) {
@@ -2368,6 +2531,11 @@ void SpectraController::processFullFileWork() {
                 retainedEnergy);
             return;
         }
+        fullFileTimer_.stop();
+        fullFileWork_ = FullFileIdle;
+        setStatusText(
+            QStringLiteral(
+                "Background STFT reconstruction did not complete"));
         emit fullFileChanged();
     }
 }
