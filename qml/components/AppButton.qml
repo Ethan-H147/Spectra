@@ -6,9 +6,12 @@ Button {
 
     property color accentColor: theme.accent
     property bool quiet: false
+    property bool compact: false
 
-    implicitHeight: 40
-    implicitWidth: Math.max(112, contentItem.implicitWidth + 32)
+    implicitHeight: compact ? 32 : 40
+    implicitWidth: compact
+        ? contentItem.implicitWidth + 24
+        : Math.max(112, contentItem.implicitWidth + 32)
     hoverEnabled: true
 
     Theme {

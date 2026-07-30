@@ -12,7 +12,7 @@ Spectra keeps these terms distinct:
 - An **STFT frame** is a windowed time segment with its own Fourier components.
 - A **reconstruction** is an audio buffer produced from a selected spectral representation.
 
-The active application entry point is `src/qt/main.cpp`. `src/main.c` builds the retained Raylib frontend as `spectra_legacy`. The root-level `main.c` and `wav.h` belong to an earlier experiment.
+The Qt frontend entry point is `src/qt/main.cpp`. `src/main.c` builds the Raylib frontend as `spectra_raylib`. The root-level `main.c` and `wav.h` belong to an earlier experiment.
 
 ## Reconstruction models
 
@@ -241,15 +241,15 @@ cmake --build build-windows --config Release
 Run the native executable:
 
 ```powershell
-.\build-windows\Release\spectra_desktop.exe
+.\build-windows\Release\spectra_qt.exe
 ```
 
-The primary `spectra_desktop` target uses Qt Quick layouts. The `spectra_legacy` target retains the previous Raylib window for regression comparison.
+The `spectra_qt` target uses Qt Quick layouts. The `spectra_raylib` target retains the Raylib frontend and is currently the safer release candidate while the Qt interface is revised.
 
 Build the retained frontend explicitly:
 
 ```powershell
-cmake --build build-windows --config Release --target spectra_legacy
+cmake --build build-windows --config Release --target spectra_raylib
 ```
 
 If PowerShell exposes both `PATH` and `Path`, remove the uppercase process variable before the build:
@@ -293,7 +293,7 @@ cmake --install build-windows `
   --prefix build-windows\package
 ```
 
-Run `build-windows\package\bin\spectra_desktop.exe`. The vcpkg QtBase package must include the `windeployqt` feature.
+Run `build-windows\package\bin\spectra_qt.exe`. The vcpkg QtBase package must include the `windeployqt` feature.
 
 ## Linux build
 
@@ -305,7 +305,7 @@ make test
 make run
 ```
 
-The Makefile writes the application to `build/spectra_desktop`.
+The Makefile writes the application to `build/spectra_raylib`.
 
 ## Current constraints
 

@@ -13,14 +13,14 @@ file(GLOB_RECURSE SPECTRA_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 
-add_executable(spectra_legacy ${SPECTRA_SOURCES})
-target_include_directories(spectra_legacy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+add_executable(spectra_raylib ${SPECTRA_SOURCES})
+target_include_directories(spectra_raylib PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 if(WIN32)
-    set_target_properties(spectra_legacy PROPERTIES WIN32_EXECUTABLE TRUE)
+    set_target_properties(spectra_raylib PROPERTIES WIN32_EXECUTABLE TRUE)
     if(MSVC)
         target_link_options(
-            spectra_legacy
+            spectra_raylib
             PRIVATE
                 /ENTRY:mainCRTStartup
                 /MANIFEST:NO
@@ -34,7 +34,7 @@ if(WIN32)
         "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc"
         @ONLY
     )
-    target_sources(spectra_legacy PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc")
+    target_sources(spectra_raylib PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc")
 endif()
 
 option(
@@ -43,21 +43,21 @@ option(
     ${WIN32}
 )
 if(SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL)
-    target_compile_definitions(spectra_legacy PRIVATE SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL=1)
+    target_compile_definitions(spectra_raylib PRIVATE SPECTRA_RAYLIB_CUSTOM_FRAME_CONTROL=1)
 endif()
 
 if(MSVC)
-    target_compile_options(spectra_legacy PRIVATE /W4)
+    target_compile_options(spectra_raylib PRIVATE /W4)
 else()
-    target_compile_options(spectra_legacy PRIVATE -Wall -Wextra)
+    target_compile_options(spectra_raylib PRIVATE -Wall -Wextra)
 endif()
 
 find_package(raylib CONFIG QUIET)
 if(raylib_FOUND)
-    target_link_libraries(spectra_legacy PRIVATE raylib)
+    target_link_libraries(spectra_raylib PRIVATE raylib)
 else()
     find_package(raylib REQUIRED)
-    target_link_libraries(spectra_legacy PRIVATE raylib)
+    target_link_libraries(spectra_raylib PRIVATE raylib)
 endif()
 
 if(WIN32)
@@ -65,12 +65,12 @@ if(WIN32)
 endif()
 
 find_package(Threads REQUIRED)
-target_link_libraries(spectra_legacy PRIVATE Threads::Threads)
+target_link_libraries(spectra_raylib PRIVATE Threads::Threads)
 
 if(WIN32)
-    target_link_libraries(spectra_legacy PRIVATE winmm shell32 comdlg32)
+    target_link_libraries(spectra_raylib PRIVATE winmm shell32 comdlg32)
 elseif(UNIX AND NOT APPLE)
-    target_link_libraries(spectra_legacy PRIVATE m)
+    target_link_libraries(spectra_raylib PRIVATE m)
 endif()
 
 option(
@@ -116,7 +116,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         )
 
         qt_add_executable(
-            spectra_desktop
+            spectra_qt
             WIN32
             "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/main.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller.cpp"
@@ -125,13 +125,13 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         )
 
         target_include_directories(
-            spectra_desktop
+            spectra_qt
             PRIVATE
                 "${CMAKE_CURRENT_SOURCE_DIR}/src"
         )
 
         target_link_libraries(
-            spectra_desktop
+            spectra_qt
             PRIVATE
                 Qt6::Core
                 Qt6::Gui
@@ -143,27 +143,27 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         )
 
         if(MSVC)
-            target_compile_options(spectra_desktop PRIVATE /W4)
-            target_link_options(spectra_desktop PRIVATE /MANIFEST:NO)
+            target_compile_options(spectra_qt PRIVATE /W4)
+            target_link_options(spectra_qt PRIVATE /MANIFEST:NO)
         else()
-            target_compile_options(spectra_desktop PRIVATE -Wall -Wextra)
+            target_compile_options(spectra_qt PRIVATE -Wall -Wextra)
         endif()
 
         if(WIN32)
             target_sources(
-                spectra_desktop
+                spectra_qt
                 PRIVATE
                     "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc"
             )
             target_link_libraries(
-                spectra_desktop
+                spectra_qt
                 PRIVATE
                     winmm
                     shell32
                     comdlg32
             )
         elseif(UNIX AND NOT APPLE)
-            target_link_libraries(spectra_desktop PRIVATE m)
+            target_link_libraries(spectra_qt PRIVATE m)
         endif()
 
         set(SPECTRA_QML_FILES
@@ -196,7 +196,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         endforeach()
 
         qt_add_qml_module(
-            spectra_desktop
+            spectra_qt
             URI Spectra
             VERSION 1.0
             QML_FILES
@@ -208,18 +208,18 @@ if(SPECTRA_BUILD_QT_FRONTEND)
 
         include(GNUInstallDirs)
         install(
-            TARGETS spectra_desktop
+            TARGETS spectra_qt
             RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         )
         install(
-            DIRECTORY "$<TARGET_FILE_DIR:spectra_desktop>/"
+            DIRECTORY "$<TARGET_FILE_DIR:spectra_qt>/"
             DESTINATION "${CMAKE_INSTALL_BINDIR}"
             FILES_MATCHING
                 PATTERN "*.dll"
                 PATTERN "Qt6*.dll" EXCLUDE
         )
         qt_generate_deploy_qml_app_script(
-            TARGET spectra_desktop
+            TARGET spectra_qt
             OUTPUT_SCRIPT SPECTRA_QT_DEPLOY_SCRIPT
             NO_TRANSLATIONS
         )

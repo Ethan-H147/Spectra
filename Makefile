@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -Isrc
 LDFLAGS = -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
-TARGET = build/spectra_desktop
+TARGET = build/spectra_raylib
 
 APP_SRC = src/main.c \
 	$(wildcard src/audio/*.c) \

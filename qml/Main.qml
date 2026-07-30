@@ -509,17 +509,24 @@ ApplicationWindow {
                         }
                     }
 
-                    AppButton {
-                        text: "Help  F1"
-                        quiet: true
-                        onClicked: helpPopup.open()
-                    }
+                    Row {
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                        spacing: theme.space1
 
-                    AppButton {
-                        text: window.visibility === Window.FullScreen ? "Exit full screen  F11" : "Full screen  F11"
-                        onClicked: window.visibility = window.visibility === Window.FullScreen
-                            ? Window.Windowed
-                            : Window.FullScreen
+                        AppButton {
+                            text: "Help  F1"
+                            quiet: true
+                            compact: true
+                            onClicked: helpPopup.open()
+                        }
+
+                        AppButton {
+                            text: window.visibility === Window.FullScreen ? "Exit full screen  F11" : "Full screen  F11"
+                            compact: true
+                            onClicked: window.visibility = window.visibility === Window.FullScreen
+                                ? Window.Windowed
+                                : Window.FullScreen
+                        }
                     }
                 }
 
