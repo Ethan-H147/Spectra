@@ -36,6 +36,7 @@ constexpr float kSpectrogramMaximumFrequency = 12000.0f;
 constexpr double kFullFileMaximumDuration = 600.0;
 constexpr size_t kGlobalOperationsPerTick = 65536U;
 constexpr size_t kStftFramesPerTick = 16U;
+constexpr size_t kSpectrogramFramesPerBatch = 32U;
 constexpr size_t kReconstructionCacheLimit =
     256U * 1024U * 1024U;
 constexpr ADSREnvelope kDefaultEnvelope = {0.015f, 0.08f, 0.75f, 0.12f};
@@ -72,6 +73,29 @@ QColor spectrogramColor(float decibels) {
         qRound(stops[segment].blue() +
                (stops[segment + 1].blue() - stops[segment].blue()) * amount));
 }
+
+void buildSpectrogramInBackground(
+    BackgroundTaskControl *control,
+    void *context) {
+    auto *job =
+        static_cast<StftReconstructionJob *>(context);
+    if (job == nullptr) {
+        return;
+    }
+
+    while (job->active &&
+           !background_task_cancel_requested(control)) {
+        stft_reconstruction_job_process(
+            job,
+            kSpectrogramFramesPerBatch);
+        background_task_report_progress(
+            control,
+            stft_reconstruction_job_progress(job));
+    }
+    if (job->complete) {
+        background_task_report_progress(control, 1.0f);
+    }
+}
 }  // namespace
 
 SpectraController::SpectraController(QObject *parent)
@@ -87,6 +111,7 @@ SpectraController::SpectraController(QObject *parent)
     global_fourier_job_init(&globalFourierJob_);
     global_fourier_job_init(&globalFourierJobRight_);
     stft_reconstruction_job_init(&spectrogramJob_);
+    background_task_init(&spectrogramTask_);
     stft_reconstruction_job_init(&fullFileStftJob_);
     stft_reconstruction_job_init(&fullFileStftJobRight_);
     reconstruction_cache_init(
@@ -124,6 +149,7 @@ SpectraController::SpectraController(QObject *parent)
 
 SpectraController::~SpectraController() {
     fullFileTimer_.stop();
+    background_task_cancel_and_join(&spectrogramTask_);
     audio_clip_unload(&fullFileClip_);
     interleaved_buffer_free(&fullFileBuffer_);
     reconstruction_cache_free(&reconstructionCache_);
@@ -1022,6 +1048,7 @@ void SpectraController::setFullFileMode(int mode) {
     cacheFullFileOutput();
     fullFileTimer_.stop();
     if (fullFileWork_ == SpectrogramBuild) {
+        background_task_cancel_and_join(&spectrogramTask_);
         stft_reconstruction_job_free(&spectrogramJob_);
         stft_reconstruction_job_init(&spectrogramJob_);
     } else if (fullFileWork_ == GlobalAnalysis ||
@@ -1773,6 +1800,7 @@ void SpectraController::resetAnalysis() {
 
 void SpectraController::resetFullFile() {
     fullFileTimer_.stop();
+    background_task_cancel_and_join(&spectrogramTask_);
     fullFileWork_ = FullFileIdle;
     stft_reconstruction_job_free(&fullFileStftJobRight_);
     stft_reconstruction_job_init(&fullFileStftJobRight_);
@@ -1896,6 +1924,7 @@ void SpectraController::startSpectrogramBuild() {
         return;
     }
 
+    background_task_cancel_and_join(&spectrogramTask_);
     stft_reconstruction_job_free(&spectrogramJob_);
     stft_reconstruction_job_init(&spectrogramJob_);
     const float maximumFrequency = std::min(
@@ -1919,6 +1948,19 @@ void SpectraController::startSpectrogramBuild() {
     fullFileFrameCount_ = static_cast<qsizetype>(spectrogramJob_.frame_count);
     fullFileProgress_ = 0.0;
     fullFileWork_ = SpectrogramBuild;
+    if (!background_task_start(
+            &spectrogramTask_,
+            buildSpectrogramInBackground,
+            &spectrogramJob_)) {
+        stft_reconstruction_job_free(&spectrogramJob_);
+        stft_reconstruction_job_init(&spectrogramJob_);
+        fullFileWork_ = FullFileIdle;
+        setStatusText(
+            QStringLiteral(
+                "Could not start the spectrogram worker"));
+        emit fullFileChanged();
+        return;
+    }
     setStatusText(QStringLiteral("Building whole-file spectrogram"));
     fullFileTimer_.start();
     emit fullFileChanged();
@@ -2156,19 +2198,20 @@ bool SpectraController::startStftReconstruction() {
 
 void SpectraController::processFullFileWork() {
     if (fullFileWork_ == SpectrogramBuild) {
-        stft_reconstruction_job_process(
-            &spectrogramJob_,
-            kStftFramesPerTick);
         fullFileProgress_ =
-            stft_reconstruction_job_progress(&spectrogramJob_);
-        if (spectrogramJob_.complete) {
-            finishSpectrogramBuild();
-            return;
-        }
-        if (spectrogramJob_.failed) {
+            background_task_progress(&spectrogramTask_);
+        if (background_task_is_complete(
+                &spectrogramTask_)) {
+            background_task_join(&spectrogramTask_);
+            if (spectrogramJob_.complete) {
+                finishSpectrogramBuild();
+                return;
+            }
             fullFileTimer_.stop();
             fullFileWork_ = FullFileIdle;
-            setStatusText(QStringLiteral("Spectrogram analysis failed"));
+            setStatusText(
+                QStringLiteral(
+                    "Spectrogram analysis failed"));
         }
         emit fullFileChanged();
         return;

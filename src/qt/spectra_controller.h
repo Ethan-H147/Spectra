@@ -16,6 +16,7 @@ extern "C" {
 #include "dsp/harmonic_analysis.h"
 #include "dsp/pitch_detection.h"
 #include "dsp/stft_reconstruction.h"
+#include "platform/background_task.h"
 }
 
 class SpectraController final : public QObject {
@@ -359,6 +360,7 @@ private:
     PlaybackTarget lastLabPlaybackTarget_ = RegionPlayback;
 
     StftReconstructionJob spectrogramJob_ = {};
+    BackgroundTask spectrogramTask_ = {};
     GlobalFourierJob globalFourierJob_ = {};
     GlobalFourierJob globalFourierJobRight_ = {};
     StftReconstructionJob fullFileStftJob_ = {};

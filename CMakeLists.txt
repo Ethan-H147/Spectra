@@ -111,6 +111,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/stft_reconstruction.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/waveform_summary.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/windowing.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/background_task.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/file_io.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/monotonic_clock.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows_app.c"
