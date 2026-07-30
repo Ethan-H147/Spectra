@@ -309,9 +309,20 @@ Item {
 
                         AppButton {
                             Layout.fillWidth: true
-                            text: "Reconstruction"
-                            enabled: spectra.fullFileReady
-                            onClicked: spectra.playFullFileReconstruction()
+                            text: spectra.fullFileProcessing
+                                ? "Building..."
+                                : (spectra.fullFileReady
+                                    ? "Reconstruction"
+                                    : "Build reconstruction")
+                            enabled: spectra.sourceLoaded
+                                && spectra.fullFileMaximumComponents > 0
+                                && !spectra.fullFileProcessing
+                            onClicked: {
+                                if (spectra.fullFileReady)
+                                    spectra.playFullFileReconstruction()
+                                else
+                                    spectra.buildFullFileModel()
+                            }
                         }
                     }
 
