@@ -48,18 +48,21 @@ set(SPECTRA_CORE_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/channel_mix.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/dsp_types.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/fft.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/fft_plan.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/fourier_reconstruction.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/global_fourier_reconstruction.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/harmonic_analysis.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/harmonic_resynthesis.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/pitch_detection.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/signal_utils.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/spectral_effects.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/stft_reconstruction.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/waveform_summary.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/windowing.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/background_task.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/file_io.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/monotonic_clock.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/parallel_for.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows_app.c"
 )
 
@@ -142,10 +145,14 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         qml/components/MetricCard.qml
         qml/components/Panel.qml
         qml/components/SegmentedSwitch.qml
+        qml/components/SpectrumMovementView.qml
+        qml/components/RangeEqSpectrumView.qml
         qml/components/StatusRow.qml
         qml/components/TransportPlayer.qml
         qml/components/WorkspaceCard.qml
         qml/pages/OverviewPage.qml
+        qml/pages/PitchShiftPage.qml
+        qml/pages/RangeEqPage.qml
         qml/pages/AnalysisPage.qml
         qml/pages/HarmonicLabPage.qml
         qml/pages/SpectrogramPage.qml
@@ -234,6 +241,7 @@ file(
 add_executable(
     dsp_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/dsp_tests.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/parallel_for.c"
     ${SPECTRA_DSP_SOURCES}
 )
 target_include_directories(
@@ -242,6 +250,20 @@ target_include_directories(
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 spectra_enable_warnings(dsp_tests)
+
+add_executable(
+    dsp_benchmark
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/dsp_benchmark.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/monotonic_clock.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/parallel_for.c"
+    ${SPECTRA_DSP_SOURCES}
+)
+target_include_directories(
+    dsp_benchmark
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+spectra_enable_warnings(dsp_benchmark)
 
 add_executable(
     audio_import_tests
@@ -268,6 +290,7 @@ add_executable(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/reconstruction_cache.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/dsp_types.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/background_task.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/parallel_for.c"
 )
 
 add_executable(
@@ -287,10 +310,13 @@ target_include_directories(
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
+target_link_libraries(dsp_tests PRIVATE Threads::Threads)
+target_link_libraries(dsp_benchmark PRIVATE Threads::Threads)
 target_link_libraries(runtime_tests PRIVATE Threads::Threads)
 spectra_enable_warnings(runtime_tests)
 
 spectra_link_platform(dsp_tests)
+spectra_link_platform(dsp_benchmark)
 spectra_link_platform(audio_import_tests)
 
 enable_testing()

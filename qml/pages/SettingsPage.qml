@@ -107,6 +107,102 @@ ScrollView {
         Panel {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            title: "Processing performance"
+            subtitle: "Scales to the computer running Spectra"
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: theme.space2
+
+                Text {
+                    Layout.fillWidth: true
+                    text: spectra.performanceModeName
+                        + "  ·  "
+                        + "up to "
+                        + spectra.processingWorkerCount
+                        + " of "
+                        + spectra.hardwareThreadCount
+                        + " logical processors"
+                    color: theme.text
+                    font.family: theme.headingFamily
+                    font.pixelSize: theme.fontSize(16)
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.Wrap
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: spectra.performanceMode === 0
+                        ? "Recommended. Uses the available CPU while keeping the app responsive."
+                        : spectra.performanceMode === 1
+                            ? "Uses every logical processor for the shortest builds."
+                            : spectra.performanceMode === 2
+                                ? "Uses about half the CPU for quieter, lower-power processing."
+                                : "Runs one worker for compatibility and the lowest memory pressure."
+                    color: theme.muted
+                    font.family: theme.bodyFamily
+                    font.pixelSize: theme.fontSize(12)
+                    wrapMode: Text.Wrap
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: theme.space1
+                    rowSpacing: theme.space1
+
+                    Repeater {
+                        model: [
+                            {
+                                "label": "Automatic",
+                                "mode": 0
+                            },
+                            {
+                                "label": "Maximum",
+                                "mode": 1
+                            },
+                            {
+                                "label": "Efficient",
+                                "mode": 2
+                            },
+                            {
+                                "label": "Single core",
+                                "mode": 3
+                            }
+                        ]
+
+                        AppButton {
+                            required property var modelData
+
+                            Layout.fillWidth: true
+                            text: modelData.label
+                            quiet:
+                                spectra.performanceMode
+                                    !== modelData.mode
+                            onClicked:
+                                spectra.setPerformanceMode(
+                                    modelData.mode)
+                        }
+                    }
+                }
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "Processing backend"
+                    value: spectra.processingBackendName
+                    stateColor: theme.success
+                }
+
+                Item {
+                    Layout.fillHeight: true
+                }
+            }
+        }
+
+        Panel {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             title: "Whole-file FFT"
             subtitle: "Memory ceiling for reusable global models"
 
@@ -221,6 +317,7 @@ ScrollView {
                         || spectra.framePlaying
                         || spectra.fourierPlaying
                         || spectra.fullFilePlaying
+                        || spectra.effectPlaying
                         ? "Playing"
                         : "Stopped"
                     stateColor: value === "Playing" ? theme.accent : theme.quiet
@@ -345,7 +442,7 @@ ScrollView {
                     Layout.fillWidth: true
                     interactive: false
                     label: "Workspaces"
-                    value: "1–5"
+                    value: "1–8"
                 }
 
                 StatusRow {

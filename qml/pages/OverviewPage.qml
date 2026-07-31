@@ -238,7 +238,7 @@ Item {
 
             GridLayout {
                 Layout.fillWidth: true
-                columns: width < 960 ? 2 : 4
+                columns: width < 960 ? 2 : 3
                 columnSpacing: 12
                 rowSpacing: 12
 
@@ -306,6 +306,76 @@ Item {
                             ? theme.success
                             : (spectra.sourceLoaded ? theme.warning : theme.quiet))
                     onActivated: spectra.setCurrentPage(4)
+                }
+
+                WorkspaceCard {
+                    Layout.fillWidth: true
+                    Layout.minimumHeight: 196
+                    title: "Pitch & Shift"
+                    value: spectra.effectProcessing
+                        ? Math.round(spectra.effectProgress * 100) + "%"
+                        : (spectra.effectReady
+                            ? spectra.effectModeName
+                            : (spectra.sourceLoaded
+                                ? "Source loaded"
+                                : "No source"))
+                    detail: spectra.effectReady
+                        ? spectra.effectOutputDuration.toFixed(2)
+                            + " s processed output"
+                        : (spectra.sourceLoaded
+                            ? "Build one of three spectral effects"
+                            : "Import audio first")
+                    statusText: spectra.effectProcessing
+                        ? "BUILDING"
+                        : (spectra.effectReady
+                            ? "READY"
+                            : (spectra.sourceLoaded
+                                ? "SOURCE"
+                                : "EMPTY"))
+                    stateColor: spectra.effectProcessing
+                        ? theme.accent
+                        : (spectra.effectReady
+                            ? theme.success
+                            : (spectra.sourceLoaded
+                                ? theme.warning
+                                : theme.quiet))
+                    onActivated: spectra.setCurrentPage(5)
+                }
+
+                WorkspaceCard {
+                    Layout.fillWidth: true
+                    Layout.minimumHeight: 196
+                    title: "Range EQ"
+                    value: spectra.eqProcessing
+                        ? Math.round(
+                            spectra.eqProgress * 100) + "%"
+                        : (spectra.eqReady
+                            ? spectra.eqBandCount + " bands"
+                            : (spectra.sourceLoaded
+                                ? spectra.eqBandCount
+                                    + " bands"
+                                : "No source"))
+                    detail: spectra.eqReady
+                        ? spectra.eqOutputDuration.toFixed(2)
+                            + " s processed output"
+                        : (spectra.sourceLoaded
+                            ? "Shape ranges directly on the spectrum"
+                            : "Import audio first")
+                    statusText: spectra.eqProcessing
+                        ? "BUILDING"
+                        : (spectra.eqReady
+                            ? "READY"
+                            : (spectra.sourceLoaded
+                                ? "SOURCE"
+                                : "EMPTY"))
+                    stateColor: spectra.eqProcessing
+                        ? theme.accent
+                        : (spectra.eqReady
+                            ? theme.success
+                            : (spectra.sourceLoaded
+                                ? theme.warning
+                                : theme.quiet))
+                    onActivated: spectra.setCurrentPage(6)
                 }
             }
         }

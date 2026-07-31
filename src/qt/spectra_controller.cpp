@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QPointF>
+#include <QSettings>
 #include <QVariantMap>
 #include <QtMath>
 
@@ -21,6 +22,9 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
+#include <new>
+#include <utility>
+#include <vector>
 
 namespace {
 constexpr unsigned int kSampleRate = 44100U;
@@ -30,6 +34,11 @@ constexpr int kWaveformPoints = 512;
 constexpr int kSourceWaveformPoints = 1024;
 constexpr unsigned int kFullFileWindowSize = 2048U;
 constexpr unsigned int kFullFileHopSize = 512U;
+constexpr unsigned int kEffectWindowSize = 2048U;
+constexpr unsigned int kEffectHopSize = 512U;
+constexpr float kEffectSpectrumFloorDb = -100.0f;
+constexpr size_t kMaximumEqBands = 16U;
+constexpr int kEqPresetCount = 12;
 constexpr unsigned int kSpectrogramTimeBins = 256U;
 constexpr unsigned int kSpectrogramFrequencyBins = 128U;
 constexpr float kSpectrogramMaximumFrequency = 12000.0f;
@@ -41,6 +50,21 @@ constexpr size_t kReconstructionCacheLimit =
     256U * 1024U * 1024U;
 constexpr ADSREnvelope kDefaultEnvelope = {0.015f, 0.08f, 0.75f, 0.12f};
 
+unsigned int threadLimitForPerformanceMode(int mode) {
+    const unsigned int hardware =
+        spectra_hardware_thread_count();
+    switch (mode) {
+        case 1:
+            return hardware;
+        case 2:
+            return std::max(1U, hardware / 2U);
+        case 3:
+            return 1U;
+        default:
+            return 0U;
+    }
+}
+
 const char *const kPresetNames[] = {
     "Sine",
     "Square-like",
@@ -49,8 +73,151 @@ const char *const kPresetNames[] = {
     "Bright string",
 };
 
+const char *const kEqPresetNames[kEqPresetCount] = {
+    "Flat",
+    "Balanced",
+    "Bass Boost",
+    "Deep Bass",
+    "Warm",
+    "Vocal Clarity",
+    "Treble Boost",
+    "Bright",
+    "Loudness",
+    "Reduce Rumble",
+    "Reduce Harshness",
+    "Podcast / Speech",
+};
+
 double clampValue(double value, double minimum, double maximum) {
     return std::max(minimum, std::min(value, maximum));
+}
+
+void appendEqPresetBand(
+    std::vector<SpectralEqBand> &bands,
+    double maximumFrequency,
+    double lowHz,
+    double highHz,
+    double gainDb) {
+    if (bands.size() >= kMaximumEqBands ||
+        maximumFrequency <= 0.0 ||
+        lowHz >= maximumFrequency) {
+        return;
+    }
+    const double low =
+        clampValue(lowHz, 0.0, maximumFrequency);
+    const double high =
+        clampValue(highHz, 0.0, maximumFrequency);
+    const double minimumWidth =
+        std::min(20.0, maximumFrequency);
+    if (high - low < minimumWidth) {
+        return;
+    }
+    bands.push_back(SpectralEqBand{
+        static_cast<float>(low),
+        static_cast<float>(high),
+        static_cast<float>(
+            clampValue(gainDb, -24.0, 24.0)),
+        true,
+    });
+}
+
+std::vector<SpectralEqBand> buildEqPresetBands(
+    int preset,
+    double maximumFrequency) {
+    std::vector<SpectralEqBand> bands;
+    const auto add =
+        [&bands, maximumFrequency](
+            double lowHz,
+            double highHz,
+            double gainDb) {
+            appendEqPresetBand(
+                bands,
+                maximumFrequency,
+                lowHz,
+                highHz,
+                gainDb);
+        };
+
+    switch (preset) {
+    case 0:
+        add(0.0, maximumFrequency, 0.0);
+        break;
+    case 1:
+        add(30.0, 180.0, 1.5);
+        add(250.0, 700.0, -0.75);
+        add(2000.0, 5000.0, 1.0);
+        add(8000.0, 16000.0, 1.5);
+        break;
+    case 2:
+        add(20.0, 250.0, 4.0);
+        add(250.0, 500.0, 1.5);
+        break;
+    case 3:
+        add(20.0, 90.0, 5.0);
+        add(90.0, 180.0, 1.5);
+        break;
+    case 4:
+        add(30.0, 220.0, 2.5);
+        add(220.0, 600.0, 1.0);
+        add(6000.0, 16000.0, -1.0);
+        break;
+    case 5:
+        add(20.0, 100.0, -5.0);
+        add(180.0, 500.0, -1.5);
+        add(1200.0, 4000.0, 2.5);
+        add(4000.0, 8000.0, 1.0);
+        break;
+    case 6:
+        add(3500.0, 8000.0, 2.5);
+        add(8000.0, 16000.0, 4.0);
+        break;
+    case 7:
+        add(2000.0, 6000.0, 1.5);
+        add(6000.0, 14000.0, 2.5);
+        break;
+    case 8:
+        add(20.0, 220.0, 3.0);
+        add(4000.0, 16000.0, 2.5);
+        break;
+    case 9:
+        add(0.0, 45.0, -18.0);
+        add(45.0, 90.0, -8.0);
+        break;
+    case 10:
+        add(2500.0, 8000.0, -3.0);
+        break;
+    case 11:
+        add(0.0, 80.0, -12.0);
+        add(120.0, 350.0, -2.0);
+        add(1500.0, 4500.0, 2.5);
+        add(8000.0, 16000.0, -1.0);
+        break;
+    default:
+        break;
+    }
+    return bands;
+}
+
+double transformEffectFrequency(
+    double sourceFrequency,
+    double maximumFrequency,
+    int mode,
+    double pitchFactor,
+    double frequencyShift) {
+    if (sourceFrequency <= 0.0 ||
+        maximumFrequency <= 0.0) {
+        return 0.0;
+    }
+    const double transformedFrequency =
+        mode == 2
+            ? std::abs(
+                  sourceFrequency +
+                  frequencyShift)
+            : sourceFrequency * pitchFactor;
+    return clampValue(
+        transformedFrequency,
+        0.0,
+        maximumFrequency);
 }
 
 QColor spectrogramColor(float decibels) {
@@ -95,6 +262,194 @@ void buildSpectrogramInBackground(
     if (job->complete) {
         background_task_report_progress(control, 1.0f);
     }
+}
+
+bool reportEffectProgress(float progress, void *context) {
+    auto *control =
+        static_cast<BackgroundTaskControl *>(context);
+    if (control == nullptr ||
+        background_task_cancel_requested(control)) {
+        return false;
+    }
+    background_task_report_progress(
+        control,
+        std::min(0.9f, progress * 0.9f));
+    return true;
+}
+
+struct EffectSpectrumPreview {
+    QVariantList values;
+    double peakFrequency = 0.0;
+};
+
+EffectSpectrumPreview effectSpectrumPreviewFromSpectrum(
+    const Spectrum &spectrum) {
+    EffectSpectrumPreview preview;
+    if (spectrum.count == 0U ||
+        spectrum.magnitudes == nullptr ||
+        spectrum.frequencies == nullptr) {
+        return preview;
+    }
+
+    size_t peakIndex = 0U;
+    float peakMagnitude = 0.0f;
+    for (size_t index = 1U;
+         index < spectrum.count;
+         ++index) {
+        if (spectrum.frequencies[index] >= 20.0f &&
+            spectrum.magnitudes[index] >
+                peakMagnitude) {
+            peakMagnitude =
+                spectrum.magnitudes[index];
+            peakIndex = index;
+        }
+    }
+
+    preview.values.reserve(
+        static_cast<qsizetype>(spectrum.count));
+    for (size_t index = 0U;
+         index < spectrum.count;
+         ++index) {
+        const float decibels =
+            20.0f *
+            std::log10(
+                std::max(
+                    spectrum.magnitudes[index],
+                    0.00001f));
+        preview.values.append(
+            std::max(
+                kEffectSpectrumFloorDb,
+                std::min(0.0f, decibels)));
+    }
+    if (peakMagnitude > 1.0e-8f) {
+        preview.peakFrequency =
+            static_cast<double>(
+                spectrum.frequencies[peakIndex]);
+    }
+    return preview;
+}
+
+Spectrum computeEffectAveragedSpectrum(
+    const InterleavedBuffer &buffer) {
+    Spectrum spectrum = {};
+    if (buffer.samples == nullptr ||
+        buffer.frame_count == 0U ||
+        buffer.sample_rate == 0U ||
+        buffer.channel_count == 0U) {
+        return spectrum;
+    }
+
+    std::vector<float> mono;
+    try {
+        mono.resize(buffer.frame_count);
+    } catch (const std::bad_alloc &) {
+        return spectrum;
+    }
+    if (!downmix_interleaved_to_mono(
+            buffer.samples,
+            buffer.frame_count,
+            buffer.channel_count,
+            mono.data())) {
+        return spectrum;
+    }
+    return compute_averaged_magnitude_spectrum(
+        mono.data(),
+        mono.size(),
+        buffer.sample_rate);
+}
+
+EffectSpectrumPreview transformEffectSpectrum(
+    const QVariantList &source,
+    double maximumFrequency,
+    int mode,
+    double pitchFactor,
+    double frequencyShift) {
+    EffectSpectrumPreview preview;
+    if (source.isEmpty() ||
+        maximumFrequency <= 0.0) {
+        return preview;
+    }
+
+    const qsizetype count = source.size();
+    std::vector<double> magnitudes(
+        static_cast<size_t>(count),
+        0.0);
+    for (qsizetype index = 1;
+         index < count;
+         ++index) {
+        const double decibels =
+            source[index].toDouble();
+        const double magnitude =
+            std::pow(10.0, decibels / 20.0);
+        const double sourceFrequency =
+            static_cast<double>(index) /
+            static_cast<double>(count) *
+            maximumFrequency;
+        const double targetFrequency =
+            mode == 2
+                ? std::abs(
+                      sourceFrequency +
+                      frequencyShift)
+                : sourceFrequency * pitchFactor;
+        const double targetPosition =
+            targetFrequency / maximumFrequency *
+            static_cast<double>(count);
+        if (targetPosition < 0.0 ||
+            targetPosition >=
+                static_cast<double>(count)) {
+            continue;
+        }
+
+        const size_t first =
+            static_cast<size_t>(targetPosition);
+        const double fraction =
+            targetPosition -
+            static_cast<double>(first);
+        magnitudes[first] +=
+            magnitude * (1.0 - fraction);
+        if (first + 1U <
+            static_cast<size_t>(count)) {
+            magnitudes[first + 1U] +=
+                magnitude * fraction;
+        }
+    }
+
+    double peakMagnitude = 0.0;
+    size_t peakIndex = 0U;
+    for (size_t index = 1U;
+         index < magnitudes.size();
+         ++index) {
+        const double frequency =
+            static_cast<double>(index) /
+            static_cast<double>(count) *
+            maximumFrequency;
+        if (frequency >= 20.0 &&
+            magnitudes[index] > peakMagnitude) {
+            peakMagnitude = magnitudes[index];
+            peakIndex = index;
+        }
+    }
+
+    preview.values.reserve(count);
+    for (double magnitude : magnitudes) {
+        const double decibels =
+            magnitude > 0.0
+                ? 20.0 * std::log10(magnitude)
+                : static_cast<double>(
+                      kEffectSpectrumFloorDb);
+        preview.values.append(
+            std::max(
+                static_cast<double>(
+                    kEffectSpectrumFloorDb),
+                std::min(0.0, decibels)));
+    }
+    if (peakMagnitude > 1.0e-12) {
+        preview.peakFrequency =
+            static_cast<double>(peakIndex) /
+            static_cast<double>(count) *
+            maximumFrequency;
+    }
+    return preview;
 }
 }  // namespace
 
@@ -184,8 +539,196 @@ void SpectraController::processStftFullFileInBackground(
     }
 }
 
+void SpectraController::processEffectSourceSpectrumInBackground(
+    BackgroundTaskControl *control,
+    void *context) {
+    auto *controller =
+        static_cast<SpectraController *>(context);
+    if (controller == nullptr || control == nullptr) {
+        return;
+    }
+
+    spectrum_free(
+        &controller->effectSourceSpectrumWorker_);
+    controller->effectSourceSpectrumWorkerSucceeded_ =
+        false;
+    if (background_task_cancel_requested(control) ||
+        controller->importedAudio_.mono.samples == nullptr ||
+        controller->importedAudio_.mono.count == 0U) {
+        return;
+    }
+
+    Spectrum spectrum =
+        compute_averaged_magnitude_spectrum(
+            controller->importedAudio_.mono.samples,
+            controller->importedAudio_.mono.count,
+            controller->importedAudio_.mono.sample_rate);
+    if (background_task_cancel_requested(control)) {
+        spectrum_free(&spectrum);
+        return;
+    }
+
+    controller->effectSourceSpectrumWorker_ =
+        spectrum;
+    controller->effectSourceSpectrumWorkerSucceeded_ =
+        spectrum.count > 0U &&
+        spectrum.magnitudes != nullptr &&
+        spectrum.frequencies != nullptr;
+    background_task_report_progress(control, 1.0f);
+}
+
+void SpectraController::processEffectInBackground(
+    BackgroundTaskControl *control,
+    void *context) {
+    auto *controller =
+        static_cast<SpectraController *>(context);
+    if (controller == nullptr || control == nullptr) {
+        return;
+    }
+
+    bool succeeded = false;
+    switch (controller->effectWorkerMode_) {
+        case 0: {
+            const float pitchFactor = static_cast<float>(
+                std::pow(
+                    2.0,
+                    controller->effectWorkerAmount_ /
+                        12.0));
+            succeeded = playback_rate_pitch_shift(
+                &controller->importedAudio_.interleaved,
+                pitchFactor,
+                &controller->effectWorkerBuffer_,
+                reportEffectProgress,
+                control);
+            break;
+        }
+        case 1: {
+            const float pitchFactor = static_cast<float>(
+                std::pow(
+                    2.0,
+                    controller->effectWorkerAmount_ /
+                        12.0));
+            succeeded = phase_vocoder_pitch_shift(
+                &controller->importedAudio_.interleaved,
+                pitchFactor,
+                kEffectWindowSize,
+                kEffectHopSize,
+                &controller->effectWorkerBuffer_,
+                reportEffectProgress,
+                control);
+            break;
+        }
+        case 2:
+            succeeded = analytic_frequency_shift(
+                &controller->importedAudio_.interleaved,
+                static_cast<float>(
+                    controller->effectWorkerAmount_),
+                kEffectWindowSize,
+                kEffectHopSize,
+                &controller->effectWorkerBuffer_,
+                reportEffectProgress,
+                control);
+            break;
+        default:
+            break;
+    }
+
+    spectrum_free(
+        &controller->effectWorkerSpectrum_);
+    if (succeeded &&
+        !background_task_cancel_requested(control)) {
+        background_task_report_progress(
+            control,
+            0.92f);
+        controller->effectWorkerSpectrum_ =
+            computeEffectAveragedSpectrum(
+                controller->effectWorkerBuffer_);
+        if (background_task_cancel_requested(control)) {
+            spectrum_free(
+                &controller->effectWorkerSpectrum_);
+        } else {
+            background_task_report_progress(
+                control,
+                1.0f);
+        }
+    }
+
+    controller->effectWorkerSucceeded_ =
+        succeeded &&
+        !background_task_cancel_requested(control);
+    if (!controller->effectWorkerSucceeded_) {
+        interleaved_buffer_free(
+            &controller->effectWorkerBuffer_);
+        spectrum_free(
+            &controller->effectWorkerSpectrum_);
+    }
+}
+
+void SpectraController::processEqInBackground(
+    BackgroundTaskControl *control,
+    void *context) {
+    auto *controller =
+        static_cast<SpectraController *>(context);
+    if (controller == nullptr || control == nullptr) {
+        return;
+    }
+
+    interleaved_buffer_free(
+        &controller->eqWorkerBuffer_);
+    spectrum_free(&controller->eqWorkerSpectrum_);
+    const SpectralEqBand *bands =
+        controller->eqWorkerBands_.empty()
+            ? nullptr
+            : controller->eqWorkerBands_.data();
+    const bool succeeded = spectral_range_equalize(
+        &controller->importedAudio_.interleaved,
+        bands,
+        controller->eqWorkerBands_.size(),
+        kEffectWindowSize,
+        kEffectHopSize,
+        &controller->eqWorkerBuffer_,
+        reportEffectProgress,
+        control);
+
+    if (succeeded &&
+        !background_task_cancel_requested(control)) {
+        background_task_report_progress(control, 0.92f);
+        controller->eqWorkerSpectrum_ =
+            computeEffectAveragedSpectrum(
+                controller->eqWorkerBuffer_);
+        if (background_task_cancel_requested(control)) {
+            spectrum_free(
+                &controller->eqWorkerSpectrum_);
+        } else {
+            background_task_report_progress(
+                control, 1.0f);
+        }
+    }
+
+    controller->eqWorkerSucceeded_ =
+        succeeded &&
+        !background_task_cancel_requested(control);
+    if (!controller->eqWorkerSucceeded_) {
+        interleaved_buffer_free(
+            &controller->eqWorkerBuffer_);
+        spectrum_free(
+            &controller->eqWorkerSpectrum_);
+    }
+}
+
 SpectraController::SpectraController(QObject *parent)
     : QObject(parent) {
+    QSettings settings;
+    performanceMode_ = std::max(
+        0,
+        std::min(
+            settings.value(
+                QStringLiteral("performance/mode"), 0)
+                .toInt(),
+            3));
+    spectra_set_parallel_thread_limit(
+        threadLimitForPerformanceMode(performanceMode_));
+
     audio_clip_init(&synthClip_);
     audio_clip_init(&sourceClip_);
     audio_clip_init(&regionClip_);
@@ -193,12 +736,17 @@ SpectraController::SpectraController(QObject *parent)
     audio_clip_init(&originalFrameClip_);
     audio_clip_init(&fourierClip_);
     audio_clip_init(&fullFileClip_);
+    audio_clip_init(&effectClip_);
+    audio_clip_init(&eqClip_);
     fourier_frame_analysis_init(&fourierAnalysis_);
     global_fourier_job_init(&globalFourierJob_);
     global_fourier_job_init(&globalFourierJobRight_);
     stft_reconstruction_job_init(&spectrogramJob_);
     background_task_init(&spectrogramTask_);
     background_task_init(&fullFileTask_);
+    background_task_init(&effectTask_);
+    background_task_init(&effectSpectrumTask_);
+    background_task_init(&eqTask_);
     stft_reconstruction_job_init(&fullFileStftJob_);
     stft_reconstruction_job_init(&fullFileStftJobRight_);
     reconstruction_cache_init(
@@ -230,15 +778,55 @@ SpectraController::SpectraController(QObject *parent)
         this,
         &SpectraController::processFullFileWork);
 
+    effectTimer_.setInterval(16);
+    connect(
+        &effectTimer_,
+        &QTimer::timeout,
+        this,
+        &SpectraController::processEffectWork);
+
+    effectSpectrumTimer_.setInterval(16);
+    connect(
+        &effectSpectrumTimer_,
+        &QTimer::timeout,
+        this,
+        &SpectraController::processEffectSourceSpectrumWork);
+
+    eqTimer_.setInterval(16);
+    connect(
+        &eqTimer_,
+        &QTimer::timeout,
+        this,
+        &SpectraController::processEqWork);
+
     applySynthPreset(0);
     rebuildSynth();
 }
 
 SpectraController::~SpectraController() {
+    eqTimer_.stop();
+    effectSpectrumTimer_.stop();
+    effectTimer_.stop();
     fullFileTimer_.stop();
+    background_task_cancel_and_join(
+        &effectSpectrumTask_);
+    background_task_cancel_and_join(&effectTask_);
+    background_task_cancel_and_join(&eqTask_);
     background_task_cancel_and_join(&spectrogramTask_);
     background_task_cancel_and_join(&fullFileTask_);
     audio_clip_unload(&fullFileClip_);
+    audio_clip_unload(&effectClip_);
+    audio_clip_unload(&eqClip_);
+    interleaved_buffer_free(&effectWorkerBuffer_);
+    interleaved_buffer_free(&effectBuffer_);
+    spectrum_free(&effectSourceSpectrumWorker_);
+    spectrum_free(&effectSourceSpectrumBuffer_);
+    spectrum_free(&effectWorkerSpectrum_);
+    spectrum_free(&effectOutputSpectrumBuffer_);
+    interleaved_buffer_free(&eqWorkerBuffer_);
+    interleaved_buffer_free(&eqBuffer_);
+    spectrum_free(&eqWorkerSpectrum_);
+    spectrum_free(&eqOutputSpectrumBuffer_);
     interleaved_buffer_free(&fullFileBuffer_);
     reconstruction_cache_free(&reconstructionCache_);
     stft_reconstruction_job_free(&fullFileStftJobRight_);
@@ -278,6 +866,37 @@ QString SpectraController::statusText() const {
 
 double SpectraController::textScale() const {
     return textScale_;
+}
+
+int SpectraController::performanceMode() const {
+    return performanceMode_;
+}
+
+QString SpectraController::performanceModeName() const {
+    switch (performanceMode_) {
+        case 1:
+            return QStringLiteral("Maximum");
+        case 2:
+            return QStringLiteral("Efficient");
+        case 3:
+            return QStringLiteral("Single core");
+        default:
+            return QStringLiteral("Automatic");
+    }
+}
+
+int SpectraController::processingWorkerCount() const {
+    return static_cast<int>(
+        spectra_effective_worker_count());
+}
+
+int SpectraController::hardwareThreadCount() const {
+    return static_cast<int>(
+        spectra_hardware_thread_count());
+}
+
+QString SpectraController::processingBackendName() const {
+    return QStringLiteral("Optimized multicore CPU");
 }
 
 double SpectraController::synthFrequency() const {
@@ -698,8 +1317,214 @@ int SpectraController::fullFilePlaybackSelection() const {
     return lastFullFilePlaybackTarget_ == FullFilePlayback ? 1 : 0;
 }
 
+bool SpectraController::effectProcessing() const {
+    return background_task_has_work(&effectTask_);
+}
+
+bool SpectraController::effectReady() const {
+    return effectBuffer_.samples != nullptr &&
+        effectBuffer_.frame_count > 0U;
+}
+
+int SpectraController::effectMode() const {
+    return effectMode_;
+}
+
+QString SpectraController::effectModeName() const {
+    switch (effectMode_) {
+        case 0:
+            return QStringLiteral("Tape speed");
+        case 1:
+            return QStringLiteral("Pitch shift");
+        case 2:
+            return QStringLiteral("Frequency shift");
+        default:
+            return QStringLiteral("Audio effect");
+    }
+}
+
+double SpectraController::effectSemitones() const {
+    return effectSemitones_;
+}
+
+double SpectraController::effectPitchFactor() const {
+    return std::pow(2.0, effectSemitones_ / 12.0);
+}
+
+double SpectraController::effectFrequencyShift() const {
+    return effectFrequencyShift_;
+}
+
+double SpectraController::effectProgress() const {
+    return effectProgress_;
+}
+
+double SpectraController::effectOutputDuration() const {
+    return effectBuffer_.sample_rate > 0U
+        ? static_cast<double>(effectBuffer_.frame_count) /
+              static_cast<double>(effectBuffer_.sample_rate)
+        : 0.0;
+}
+
+int SpectraController::effectOutputChannels() const {
+    return static_cast<int>(effectBuffer_.channel_count);
+}
+
+int SpectraController::effectWindowSize() const {
+    return static_cast<int>(kEffectWindowSize);
+}
+
+int SpectraController::effectHopSize() const {
+    return static_cast<int>(kEffectHopSize);
+}
+
+QVariantList SpectraController::effectOriginalSpectrum() const {
+    return effectOriginalSpectrum_;
+}
+
+QVariantList SpectraController::effectTransformedSpectrum() const {
+    return effectTransformedSpectrum_;
+}
+
+double SpectraController::effectSpectrumMaximumFrequency() const {
+    return sourceSampleRate() > 0
+        ? static_cast<double>(sourceSampleRate()) * 0.5
+        : 1.0;
+}
+
+double SpectraController::effectOriginalPeakFrequency() const {
+    return effectOriginalPeakFrequency_;
+}
+
+double SpectraController::effectTransformedPeakFrequency() const {
+    return effectTransformedPeakFrequency_;
+}
+
+bool SpectraController::effectSpectrumPreview() const {
+    return effectSpectrumPreview_;
+}
+
+bool SpectraController::effectSpectrumAnalyzing() const {
+    return background_task_is_running(
+        &effectSpectrumTask_);
+}
+
+bool SpectraController::effectPlaying() const {
+    return audio_clip_is_playing(&effectClip_) ||
+        (playbackTarget_ == SourcePlayback &&
+         audio_clip_is_playing(&sourceClip_));
+}
+
+int SpectraController::effectPlaybackSelection() const {
+    return lastEffectPlaybackTarget_ == EffectPlayback ? 1 : 0;
+}
+
+QStringList SpectraController::eqPresetNames() const {
+    QStringList result;
+    result.reserve(kEqPresetCount);
+    for (int index = 0; index < kEqPresetCount; ++index) {
+        result.append(
+            QString::fromUtf8(kEqPresetNames[index]));
+    }
+    return result;
+}
+
+int SpectraController::eqPreset() const {
+    return eqPreset_;
+}
+
+QVariantList SpectraController::eqBands() const {
+    QVariantList result;
+    result.reserve(
+        static_cast<qsizetype>(eqBands_.size()));
+    for (size_t index = 0U;
+         index < eqBands_.size();
+         ++index) {
+        const SpectralEqBand &band = eqBands_[index];
+        QVariantMap entry;
+        entry.insert(
+            QStringLiteral("index"),
+            static_cast<int>(index));
+        entry.insert(
+            QStringLiteral("lowHz"),
+            static_cast<double>(band.low_hz));
+        entry.insert(
+            QStringLiteral("highHz"),
+            static_cast<double>(band.high_hz));
+        entry.insert(
+            QStringLiteral("gainDb"),
+            static_cast<double>(band.gain_db));
+        entry.insert(
+            QStringLiteral("enabled"),
+            band.enabled);
+        result.append(entry);
+    }
+    return result;
+}
+
+int SpectraController::eqBandCount() const {
+    return static_cast<int>(eqBands_.size());
+}
+
+bool SpectraController::eqProcessing() const {
+    return background_task_has_work(&eqTask_);
+}
+
+bool SpectraController::eqReady() const {
+    return eqBuffer_.samples != nullptr &&
+        eqBuffer_.frame_count > 0U;
+}
+
+double SpectraController::eqProgress() const {
+    return eqProgress_;
+}
+
+double SpectraController::eqOutputDuration() const {
+    if (!eqReady() || eqBuffer_.sample_rate == 0U) {
+        return sourceDuration();
+    }
+    return static_cast<double>(eqBuffer_.frame_count) /
+        static_cast<double>(eqBuffer_.sample_rate);
+}
+
+int SpectraController::eqOutputChannels() const {
+    return eqReady()
+        ? static_cast<int>(eqBuffer_.channel_count)
+        : sourceChannels();
+}
+
+QVariantList SpectraController::eqOriginalSpectrum() const {
+    return effectOriginalSpectrum_;
+}
+
+QVariantList SpectraController::eqTransformedSpectrum() const {
+    return eqTransformedSpectrum_;
+}
+
+double SpectraController::eqSpectrumMaximumFrequency() const {
+    return effectSpectrumMaximumFrequency();
+}
+
+bool SpectraController::eqSpectrumPreview() const {
+    return eqSpectrumPreview_;
+}
+
+bool SpectraController::eqSpectrumAnalyzing() const {
+    return effectSpectrumAnalyzing();
+}
+
+bool SpectraController::eqPlaying() const {
+    return audio_clip_is_playing(&eqClip_) ||
+        (playbackTarget_ == SourcePlayback &&
+         audio_clip_is_playing(&sourceClip_));
+}
+
+int SpectraController::eqPlaybackSelection() const {
+    return lastEqPlaybackTarget_ == EqPlayback ? 1 : 0;
+}
+
 void SpectraController::setCurrentPage(int page) {
-    const int bounded = std::max(0, std::min(page, 5));
+    const int bounded = std::max(0, std::min(page, 7));
     if (bounded == currentPage_) {
         return;
     }
@@ -714,6 +1539,26 @@ void SpectraController::setTextScale(double scale) {
     }
     textScale_ = bounded;
     emit textScaleChanged();
+}
+
+void SpectraController::setPerformanceMode(int mode) {
+    const int bounded = std::max(0, std::min(mode, 3));
+    if (bounded == performanceMode_) {
+        return;
+    }
+    performanceMode_ = bounded;
+    spectra_set_parallel_thread_limit(
+        threadLimitForPerformanceMode(performanceMode_));
+    QSettings settings;
+    settings.setValue(
+        QStringLiteral("performance/mode"),
+        performanceMode_);
+    emit performanceChanged();
+    setStatusText(
+        QStringLiteral("%1 processing: up to %2 of %3 logical processors")
+            .arg(performanceModeName())
+            .arg(processingWorkerCount())
+            .arg(hardwareThreadCount()));
 }
 
 void SpectraController::setSynthFrequency(double frequency) {
@@ -1488,6 +2333,554 @@ bool SpectraController::exportFullFileFile(const QUrl &url) {
     return exported;
 }
 
+void SpectraController::setEffectMode(int mode) {
+    if (effectProcessing()) {
+        return;
+    }
+    const int bounded = std::max(0, std::min(mode, 2));
+    if (bounded == effectMode_) {
+        return;
+    }
+    haltAllAudio();
+    clearEffectOutput();
+    effectMode_ = bounded;
+    effectProgress_ = 0.0;
+    rebuildEffectSpectrumPreview();
+    emit effectChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::setEffectSemitones(double semitones) {
+    if (effectProcessing()) {
+        return;
+    }
+    const double bounded =
+        clampValue(semitones, -12.0, 12.0);
+    if (qFuzzyCompare(
+            bounded + 13.0,
+            effectSemitones_ + 13.0)) {
+        return;
+    }
+    haltAllAudio();
+    clearEffectOutput();
+    effectSemitones_ = bounded;
+    effectProgress_ = 0.0;
+    rebuildEffectSpectrumPreview();
+    emit effectChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::setEffectFrequencyShift(double shiftHz) {
+    if (effectProcessing()) {
+        return;
+    }
+    const double maximum =
+        sourceSampleRate() > 0
+            ? std::min(
+                  5000.0,
+                  static_cast<double>(
+                      sourceSampleRate()) *
+                      0.5)
+            : 5000.0;
+    const double bounded =
+        clampValue(shiftHz, -maximum, maximum);
+    if (qFuzzyCompare(
+            bounded + maximum + 1.0,
+            effectFrequencyShift_ + maximum + 1.0)) {
+        return;
+    }
+    haltAllAudio();
+    clearEffectOutput();
+    effectFrequencyShift_ = bounded;
+    effectProgress_ = 0.0;
+    rebuildEffectSpectrumPreview();
+    emit effectChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::buildEffect() {
+    if (!sourceLoaded()) {
+        setStatusText(
+            QStringLiteral(
+                "Import audio before building an effect"));
+        return;
+    }
+    if (effectProcessing()) {
+        return;
+    }
+
+    haltAllAudio();
+    clearEffectOutput();
+    rebuildEffectSpectrumPreview();
+    interleaved_buffer_free(&effectWorkerBuffer_);
+    spectrum_free(&effectWorkerSpectrum_);
+    effectWorkerMode_ = effectMode_;
+    effectWorkerAmount_ =
+        effectMode_ == 2
+            ? effectFrequencyShift_
+            : effectSemitones_;
+    effectWorkerSucceeded_ = false;
+    effectProgress_ = 0.0;
+
+    if (!background_task_start(
+            &effectTask_,
+            &SpectraController::processEffectInBackground,
+            this)) {
+        setStatusText(
+            QStringLiteral(
+                "Could not start effect processing"));
+        emit effectChanged();
+        emit playbackChanged();
+        return;
+    }
+
+    effectTimer_.start();
+    setStatusText(
+        QStringLiteral("Building %1")
+            .arg(effectModeName().toLower()));
+    emit effectChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::playEffectOriginal() {
+    if (!sourceLoaded()) {
+        return;
+    }
+    lastEffectPlaybackTarget_ = SourcePlayback;
+    emit playbackChanged();
+    if (!audioReady_) {
+        return;
+    }
+    haltAllAudio();
+    if (audio_clip_play(&sourceClip_)) {
+        playbackTarget_ = SourcePlayback;
+        setStatusText(
+            QStringLiteral(
+                "Playing original imported source"));
+        emit playbackChanged();
+    }
+}
+
+void SpectraController::playEffectProcessed() {
+    if (!effectReady()) {
+        return;
+    }
+    lastEffectPlaybackTarget_ = EffectPlayback;
+    emit playbackChanged();
+    if (!audioReady_) {
+        return;
+    }
+    haltAllAudio();
+    if (audio_clip_play(&effectClip_)) {
+        playbackTarget_ = EffectPlayback;
+        setStatusText(
+            QStringLiteral("Playing %1 output")
+                .arg(effectModeName().toLower()));
+        emit playbackChanged();
+    }
+}
+
+void SpectraController::toggleEffectPlayback() {
+    AudioClip *clip = nullptr;
+    if (playbackTarget_ == EffectPlayback) {
+        clip = &effectClip_;
+    } else if (playbackTarget_ == SourcePlayback) {
+        clip = &sourceClip_;
+    }
+    if (clip == nullptr) {
+        if (lastEffectPlaybackTarget_ == EffectPlayback &&
+            effectReady()) {
+            playEffectProcessed();
+        } else {
+            playEffectOriginal();
+        }
+        return;
+    }
+
+    if (audio_clip_is_playing(clip)) {
+        audio_clip_pause(clip);
+        setStatusText(
+            QStringLiteral("Effect playback paused"));
+    } else if (audio_clip_is_paused(clip)) {
+        audio_clip_resume(clip);
+        setStatusText(
+            QStringLiteral("Effect playback resumed"));
+    } else if (clip == &effectClip_) {
+        playEffectProcessed();
+        return;
+    } else {
+        playEffectOriginal();
+        return;
+    }
+    emit playbackChanged();
+}
+
+void SpectraController::seekEffectPlayback(double position) {
+    PlaybackTarget target = playbackTarget_;
+    AudioClip *clip = nullptr;
+    if (target == EffectPlayback) {
+        clip = &effectClip_;
+    } else if (target == SourcePlayback) {
+        clip = &sourceClip_;
+    } else if (lastEffectPlaybackTarget_ == EffectPlayback &&
+               effectReady()) {
+        target = EffectPlayback;
+        clip = &effectClip_;
+    } else {
+        target = SourcePlayback;
+        clip = &sourceClip_;
+    }
+    seekClip(clip, target, position);
+}
+
+bool SpectraController::exportEffectFile(const QUrl &url) {
+    const QString localPath =
+        url.isLocalFile()
+            ? url.toLocalFile()
+            : url.toString();
+    if (localPath.isEmpty() || !effectReady()) {
+        return false;
+    }
+    const QString wavPath =
+        localPath.endsWith(
+            QStringLiteral(".wav"),
+            Qt::CaseInsensitive)
+            ? localPath
+            : localPath + QStringLiteral(".wav");
+    const QByteArray encodedPath = wavPath.toUtf8();
+    const bool exported =
+        export_interleaved_to_wav(
+            encodedPath.constData(),
+            &effectBuffer_);
+    setStatusText(
+        exported
+            ? QStringLiteral("Exported %1 output")
+                  .arg(effectModeName().toLower())
+            : QStringLiteral(
+                  "Could not export effect output"));
+    return exported;
+}
+
+int SpectraController::addEqBand(
+    double lowHz,
+    double highHz,
+    double gainDb) {
+    if (!sourceLoaded() ||
+        eqProcessing() ||
+        eqBands_.size() >= kMaximumEqBands) {
+        return -1;
+    }
+    const double maximum =
+        static_cast<double>(sourceSampleRate()) * 0.5;
+    double low = clampValue(
+        std::min(lowHz, highHz), 0.0, maximum);
+    double high = clampValue(
+        std::max(lowHz, highHz), 0.0, maximum);
+    const double minimumWidth = std::min(
+        20.0, maximum);
+    if (high - low < minimumWidth) {
+        high = std::min(maximum, low + minimumWidth);
+        low = std::max(0.0, high - minimumWidth);
+    }
+    eqBands_.push_back(SpectralEqBand{
+        static_cast<float>(low),
+        static_cast<float>(high),
+        static_cast<float>(
+            clampValue(gainDb, -24.0, 24.0)),
+        true,
+    });
+    eqPreset_ = -1;
+    clearEqOutput();
+    rebuildEqSpectrumPreview();
+    emit eqChanged();
+    emit playbackChanged();
+    return static_cast<int>(eqBands_.size() - 1U);
+}
+
+void SpectraController::updateEqBand(
+    int index,
+    double lowHz,
+    double highHz,
+    double gainDb) {
+    if (eqProcessing() || index < 0 ||
+        static_cast<size_t>(index) >= eqBands_.size()) {
+        return;
+    }
+    const double maximum =
+        sourceLoaded()
+            ? static_cast<double>(
+                  sourceSampleRate()) * 0.5
+            : 22050.0;
+    double low = clampValue(
+        std::min(lowHz, highHz), 0.0, maximum);
+    double high = clampValue(
+        std::max(lowHz, highHz), 0.0, maximum);
+    const double minimumWidth = std::min(
+        20.0, maximum);
+    if (high - low < minimumWidth) {
+        high = std::min(maximum, low + minimumWidth);
+        low = std::max(0.0, high - minimumWidth);
+    }
+    const SpectralEqBand updated = {
+        static_cast<float>(low),
+        static_cast<float>(high),
+        static_cast<float>(
+            clampValue(gainDb, -24.0, 24.0)),
+        eqBands_[static_cast<size_t>(index)].enabled,
+    };
+    const SpectralEqBand &current =
+        eqBands_[static_cast<size_t>(index)];
+    if (std::abs(current.low_hz - updated.low_hz) <
+            0.001f &&
+        std::abs(current.high_hz - updated.high_hz) <
+            0.001f &&
+        std::abs(current.gain_db - updated.gain_db) <
+            0.001f) {
+        return;
+    }
+    eqBands_[static_cast<size_t>(index)] = updated;
+    eqPreset_ = -1;
+    clearEqOutput();
+    rebuildEqSpectrumPreview();
+    emit eqChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::setEqBandEnabled(
+    int index,
+    bool enabled) {
+    if (eqProcessing() || index < 0 ||
+        static_cast<size_t>(index) >= eqBands_.size() ||
+        eqBands_[static_cast<size_t>(index)].enabled ==
+            enabled) {
+        return;
+    }
+    eqBands_[static_cast<size_t>(index)].enabled =
+        enabled;
+    eqPreset_ = -1;
+    clearEqOutput();
+    rebuildEqSpectrumPreview();
+    emit eqChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::removeEqBand(int index) {
+    if (eqProcessing() || index < 0 ||
+        static_cast<size_t>(index) >= eqBands_.size()) {
+        return;
+    }
+    eqBands_.erase(
+        eqBands_.begin() +
+        static_cast<std::ptrdiff_t>(index));
+    eqPreset_ = -1;
+    clearEqOutput();
+    rebuildEqSpectrumPreview();
+    emit eqChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::clearEqBands() {
+    if (eqProcessing() || eqBands_.empty()) {
+        return;
+    }
+    eqBands_.clear();
+    eqPreset_ = -1;
+    clearEqOutput();
+    rebuildEqSpectrumPreview();
+    emit eqChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::applyEqPreset(int preset) {
+    if (!sourceLoaded() ||
+        eqProcessing() ||
+        preset < 0 ||
+        preset >= kEqPresetCount) {
+        return;
+    }
+    const double maximum =
+        static_cast<double>(sourceSampleRate()) * 0.5;
+    std::vector<SpectralEqBand> bands =
+        buildEqPresetBands(preset, maximum);
+    if (bands.empty()) {
+        return;
+    }
+    eqBands_ = std::move(bands);
+    eqPreset_ = preset;
+    clearEqOutput();
+    rebuildEqSpectrumPreview();
+    emit eqChanged();
+    emit playbackChanged();
+    setStatusText(
+        QStringLiteral("Loaded %1 EQ preset")
+            .arg(QString::fromUtf8(
+                kEqPresetNames[preset])));
+}
+
+void SpectraController::buildEq() {
+    if (!sourceLoaded() || eqProcessing()) {
+        return;
+    }
+    const bool hasEnabledBand =
+        std::any_of(
+            eqBands_.begin(),
+            eqBands_.end(),
+            [](const SpectralEqBand &band) {
+                return band.enabled;
+            });
+    if (!hasEnabledBand) {
+        setStatusText(
+            QStringLiteral(
+                "Add or enable an EQ band before building"));
+        return;
+    }
+
+    haltAllAudio();
+    clearEqOutput();
+    interleaved_buffer_free(&eqWorkerBuffer_);
+    spectrum_free(&eqWorkerSpectrum_);
+    eqWorkerBands_ = eqBands_;
+    eqWorkerSucceeded_ = false;
+    eqProgress_ = 0.0;
+    if (!background_task_start(
+            &eqTask_,
+            &SpectraController::processEqInBackground,
+            this)) {
+        setStatusText(
+            QStringLiteral(
+                "Could not start range EQ processing"));
+        emit eqChanged();
+        emit playbackChanged();
+        return;
+    }
+
+    eqTimer_.start();
+    setStatusText(
+        QStringLiteral("Building range EQ output"));
+    emit eqChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::playEqOriginal() {
+    if (!sourceLoaded()) {
+        return;
+    }
+    lastEqPlaybackTarget_ = SourcePlayback;
+    emit playbackChanged();
+    if (!audioReady_) {
+        return;
+    }
+    haltAllAudio();
+    if (audio_clip_play(&sourceClip_)) {
+        playbackTarget_ = SourcePlayback;
+        setStatusText(
+            QStringLiteral(
+                "Playing original imported source"));
+        emit playbackChanged();
+    }
+}
+
+void SpectraController::playEqProcessed() {
+    if (!eqReady()) {
+        return;
+    }
+    lastEqPlaybackTarget_ = EqPlayback;
+    emit playbackChanged();
+    if (!audioReady_) {
+        return;
+    }
+    haltAllAudio();
+    if (audio_clip_play(&eqClip_)) {
+        playbackTarget_ = EqPlayback;
+        setStatusText(
+            QStringLiteral("Playing range EQ output"));
+        emit playbackChanged();
+    }
+}
+
+void SpectraController::toggleEqPlayback() {
+    AudioClip *clip = nullptr;
+    if (playbackTarget_ == EqPlayback) {
+        clip = &eqClip_;
+    } else if (playbackTarget_ == SourcePlayback) {
+        clip = &sourceClip_;
+    }
+    if (clip == nullptr) {
+        if (lastEqPlaybackTarget_ == EqPlayback &&
+            eqReady()) {
+            playEqProcessed();
+        } else {
+            playEqOriginal();
+        }
+        return;
+    }
+
+    if (audio_clip_is_playing(clip)) {
+        audio_clip_pause(clip);
+        setStatusText(
+            QStringLiteral("EQ playback paused"));
+    } else if (audio_clip_is_paused(clip)) {
+        audio_clip_resume(clip);
+        setStatusText(
+            QStringLiteral("EQ playback resumed"));
+    } else if (clip == &eqClip_) {
+        playEqProcessed();
+        return;
+    } else {
+        playEqOriginal();
+        return;
+    }
+    emit playbackChanged();
+}
+
+void SpectraController::seekEqPlayback(
+    double position) {
+    PlaybackTarget target = playbackTarget_;
+    AudioClip *clip = nullptr;
+    if (target == EqPlayback) {
+        clip = &eqClip_;
+    } else if (target == SourcePlayback) {
+        clip = &sourceClip_;
+    } else if (lastEqPlaybackTarget_ == EqPlayback &&
+               eqReady()) {
+        target = EqPlayback;
+        clip = &eqClip_;
+    } else {
+        target = SourcePlayback;
+        clip = &sourceClip_;
+    }
+    seekClip(clip, target, position);
+}
+
+bool SpectraController::exportEqFile(
+    const QUrl &url) {
+    const QString localPath =
+        url.isLocalFile()
+            ? url.toLocalFile()
+            : url.toString();
+    if (localPath.isEmpty() || !eqReady()) {
+        return false;
+    }
+    const QString wavPath =
+        localPath.endsWith(
+            QStringLiteral(".wav"),
+            Qt::CaseInsensitive)
+            ? localPath
+            : localPath + QStringLiteral(".wav");
+    const QByteArray encodedPath = wavPath.toUtf8();
+    const bool exported =
+        export_interleaved_to_wav(
+            encodedPath.constData(),
+            &eqBuffer_);
+    setStatusText(
+        exported
+            ? QStringLiteral(
+                  "Exported range EQ output")
+            : QStringLiteral(
+                  "Could not export range EQ output"));
+    return exported;
+}
+
 void SpectraController::stopPlayback() {
     haltAllAudio();
     playbackTarget_ = NoPlayback;
@@ -1503,6 +2896,8 @@ void SpectraController::haltAllAudio() {
     audio_clip_stop(&originalFrameClip_);
     audio_clip_stop(&fourierClip_);
     audio_clip_stop(&fullFileClip_);
+    audio_clip_stop(&effectClip_);
+    audio_clip_stop(&eqClip_);
     playbackTarget_ = NoPlayback;
 }
 
@@ -1515,6 +2910,8 @@ void SpectraController::importAudioFile(const QUrl &url) {
     stopPlayback();
     resetAnalysis();
     resetFullFile();
+    resetEq();
+    resetEffect();
     sourceWaveformMinimums_.clear();
     sourceWaveformMaximums_.clear();
     audio_clip_unload(&sourceClip_);
@@ -1533,6 +2930,16 @@ void SpectraController::importAudioFile(const QUrl &url) {
         audio_clip_set_interleaved(&sourceClip_, &importedAudio_.interleaved);
     }
     sourceFileName_ = QFileInfo(localPath).fileName();
+    effectFrequencyShift_ = clampValue(
+        effectFrequencyShift_,
+        -std::min(
+            5000.0,
+            static_cast<double>(sourceSampleRate()) * 0.5),
+        std::min(
+            5000.0,
+            static_cast<double>(sourceSampleRate()) * 0.5));
+    rebuildEffectSourceSpectrum();
+    rebuildEffectSpectrumPreview();
     regionDuration_ = std::min(1.0, sourceDuration());
     regionStart_ = std::max(0.0, (sourceDuration() - regionDuration_) * 0.5);
     const int availableGlobalComponents =
@@ -1552,6 +2959,7 @@ void SpectraController::importAudioFile(const QUrl &url) {
     rebuildSourceWaveform();
     setStatusText(QStringLiteral("Loaded %1").arg(sourceFileName_));
     emit sourceChanged();
+    emit effectChanged();
     emit playbackChanged();
     analyzeRegion();
     startSpectrogramBuild();
@@ -1938,6 +3346,51 @@ void SpectraController::resetFullFile() {
     emit playbackChanged();
 }
 
+void SpectraController::resetEffect() {
+    effectSpectrumTimer_.stop();
+    effectTimer_.stop();
+    background_task_cancel_and_join(
+        &effectSpectrumTask_);
+    background_task_cancel_and_join(&effectTask_);
+    interleaved_buffer_free(&effectWorkerBuffer_);
+    spectrum_free(&effectSourceSpectrumWorker_);
+    spectrum_free(&effectSourceSpectrumBuffer_);
+    spectrum_free(&effectWorkerSpectrum_);
+    spectrum_free(&effectOutputSpectrumBuffer_);
+    effectWorkerSucceeded_ = false;
+    effectSourceSpectrumWorkerSucceeded_ = false;
+    clearEffectOutput();
+    effectOriginalSpectrum_.clear();
+    effectTransformedSpectrum_.clear();
+    effectOriginalPeakFrequency_ = 0.0;
+    effectTransformedPeakFrequency_ = 0.0;
+    effectSpectrumPreview_ = false;
+    emit effectSpectrumChanged();
+    effectProgress_ = 0.0;
+    lastEffectPlaybackTarget_ = SourcePlayback;
+    emit effectChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::resetEq() {
+    eqTimer_.stop();
+    background_task_cancel_and_join(&eqTask_);
+    interleaved_buffer_free(&eqWorkerBuffer_);
+    spectrum_free(&eqWorkerSpectrum_);
+    eqWorkerBands_.clear();
+    eqWorkerSucceeded_ = false;
+    clearEqOutput();
+    eqBands_.clear();
+    eqPreset_ = -1;
+    eqTransformedSpectrum_.clear();
+    eqSpectrumPreview_ = false;
+    eqProgress_ = 0.0;
+    lastEqPlaybackTarget_ = SourcePlayback;
+    emit eqChanged();
+    emit eqSpectrumChanged();
+    emit playbackChanged();
+}
+
 void SpectraController::cacheFullFileOutput() {
     if (!fullFileReady() ||
         fullFileSelectedComponents_ <= 0) {
@@ -2020,6 +3473,315 @@ void SpectraController::clearFullFileOutput() {
     audio_clip_init(&fullFileClip_);
     interleaved_buffer_free(&fullFileBuffer_);
     fullFileRetainedEnergy_ = 0.0;
+}
+
+void SpectraController::clearEffectOutput() {
+    if (playbackTarget_ == EffectPlayback) {
+        playbackTarget_ = NoPlayback;
+    }
+    audio_clip_unload(&effectClip_);
+    audio_clip_init(&effectClip_);
+    interleaved_buffer_free(&effectBuffer_);
+    spectrum_free(&effectOutputSpectrumBuffer_);
+}
+
+void SpectraController::clearEqOutput() {
+    if (playbackTarget_ == EqPlayback) {
+        playbackTarget_ = NoPlayback;
+    }
+    audio_clip_unload(&eqClip_);
+    audio_clip_init(&eqClip_);
+    interleaved_buffer_free(&eqBuffer_);
+    spectrum_free(&eqOutputSpectrumBuffer_);
+}
+
+void SpectraController::rebuildEffectSourceSpectrum() {
+    effectSpectrumTimer_.stop();
+    background_task_cancel_and_join(
+        &effectSpectrumTask_);
+    spectrum_free(&effectSourceSpectrumWorker_);
+    spectrum_free(&effectSourceSpectrumBuffer_);
+    effectSourceSpectrumWorkerSucceeded_ = false;
+    effectOriginalSpectrum_.clear();
+    effectOriginalPeakFrequency_ = 0.0;
+    eqTransformedSpectrum_.clear();
+    eqSpectrumPreview_ = false;
+
+    if (!sourceLoaded() ||
+        !background_task_start(
+            &effectSpectrumTask_,
+            &SpectraController::
+                processEffectSourceSpectrumInBackground,
+            this)) {
+        emit effectSpectrumChanged();
+        emit eqSpectrumChanged();
+        return;
+    }
+
+    effectSpectrumTimer_.start();
+    emit effectSpectrumChanged();
+    emit eqSpectrumChanged();
+}
+
+void SpectraController::processEffectSourceSpectrumWork() {
+    if (!background_task_has_work(
+            &effectSpectrumTask_)) {
+        effectSpectrumTimer_.stop();
+        return;
+    }
+    if (!background_task_is_complete(
+            &effectSpectrumTask_)) {
+        return;
+    }
+
+    background_task_join(&effectSpectrumTask_);
+    effectSpectrumTimer_.stop();
+    if (effectSourceSpectrumWorkerSucceeded_) {
+        spectrum_free(
+            &effectSourceSpectrumBuffer_);
+        effectSourceSpectrumBuffer_ =
+            effectSourceSpectrumWorker_;
+        effectSourceSpectrumWorker_ = Spectrum{};
+        const EffectSpectrumPreview preview =
+            effectSpectrumPreviewFromSpectrum(
+                effectSourceSpectrumBuffer_);
+        effectOriginalSpectrum_ = preview.values;
+        effectOriginalPeakFrequency_ =
+            preview.peakFrequency;
+    } else {
+        spectrum_free(
+            &effectSourceSpectrumWorker_);
+        effectOriginalSpectrum_.clear();
+        effectOriginalPeakFrequency_ = 0.0;
+    }
+    effectSourceSpectrumWorkerSucceeded_ = false;
+
+    if (effectOutputSpectrumBuffer_.count > 0U) {
+        rebuildEffectOutputSpectrum();
+    } else {
+        rebuildEffectSpectrumPreview();
+    }
+    if (eqOutputSpectrumBuffer_.count > 0U) {
+        rebuildEqOutputSpectrum();
+    } else {
+        rebuildEqSpectrumPreview();
+    }
+}
+
+void SpectraController::rebuildEffectSpectrumPreview() {
+    if (!sourceLoaded() ||
+        effectOriginalSpectrum_.isEmpty()) {
+        effectTransformedSpectrum_.clear();
+        effectTransformedPeakFrequency_ = 0.0;
+        effectSpectrumPreview_ = false;
+        emit effectSpectrumChanged();
+        return;
+    }
+
+    const EffectSpectrumPreview preview =
+        transformEffectSpectrum(
+            effectOriginalSpectrum_,
+            effectSpectrumMaximumFrequency(),
+            effectMode_,
+            effectPitchFactor(),
+            effectFrequencyShift_);
+    effectTransformedSpectrum_ = preview.values;
+    effectTransformedPeakFrequency_ =
+        transformEffectFrequency(
+            effectOriginalPeakFrequency_,
+            effectSpectrumMaximumFrequency(),
+            effectMode_,
+            effectPitchFactor(),
+            effectFrequencyShift_);
+    effectSpectrumPreview_ =
+        !effectTransformedSpectrum_.isEmpty();
+    emit effectSpectrumChanged();
+}
+
+void SpectraController::rebuildEffectOutputSpectrum() {
+    const EffectSpectrumPreview preview =
+        effectSpectrumPreviewFromSpectrum(
+            effectOutputSpectrumBuffer_);
+    if (preview.values.isEmpty()) {
+        rebuildEffectSpectrumPreview();
+        return;
+    }
+    effectTransformedSpectrum_ = preview.values;
+    effectTransformedPeakFrequency_ =
+        transformEffectFrequency(
+            effectOriginalPeakFrequency_,
+            effectSpectrumMaximumFrequency(),
+            effectMode_,
+            effectPitchFactor(),
+            effectFrequencyShift_);
+    effectSpectrumPreview_ = false;
+    emit effectSpectrumChanged();
+}
+
+void SpectraController::rebuildEqSpectrumPreview() {
+    if (!sourceLoaded() ||
+        effectOriginalSpectrum_.isEmpty()) {
+        eqTransformedSpectrum_.clear();
+        eqSpectrumPreview_ = false;
+        emit eqSpectrumChanged();
+        return;
+    }
+
+    const qsizetype count =
+        effectOriginalSpectrum_.size();
+    const double maximum =
+        eqSpectrumMaximumFrequency();
+    const double denominator =
+        std::max<qsizetype>(1, count - 1);
+    const SpectralEqBand *bands =
+        eqBands_.empty() ? nullptr : eqBands_.data();
+    eqTransformedSpectrum_.clear();
+    eqTransformedSpectrum_.reserve(count);
+    for (qsizetype index = 0;
+         index < count;
+         ++index) {
+        const float frequency = static_cast<float>(
+            static_cast<double>(index) /
+            static_cast<double>(denominator) *
+            maximum);
+        const double response =
+            spectral_eq_response_db(
+                frequency,
+                bands,
+                eqBands_.size());
+        eqTransformedSpectrum_.append(
+            clampValue(
+                effectOriginalSpectrum_[index]
+                    .toDouble() +
+                    response,
+                static_cast<double>(
+                    kEffectSpectrumFloorDb),
+                0.0));
+    }
+    eqSpectrumPreview_ = true;
+    emit eqSpectrumChanged();
+}
+
+void SpectraController::rebuildEqOutputSpectrum() {
+    const EffectSpectrumPreview preview =
+        effectSpectrumPreviewFromSpectrum(
+            eqOutputSpectrumBuffer_);
+    if (preview.values.isEmpty()) {
+        rebuildEqSpectrumPreview();
+        return;
+    }
+    eqTransformedSpectrum_ = preview.values;
+    eqSpectrumPreview_ = false;
+    emit eqSpectrumChanged();
+}
+
+void SpectraController::processEffectWork() {
+    if (!background_task_has_work(&effectTask_)) {
+        effectTimer_.stop();
+        return;
+    }
+
+    const double progress =
+        static_cast<double>(
+            background_task_progress(&effectTask_));
+    if (std::abs(progress - effectProgress_) >
+        0.0005) {
+        effectProgress_ = progress;
+        emit effectChanged();
+    }
+    if (!background_task_is_complete(&effectTask_)) {
+        return;
+    }
+
+    background_task_join(&effectTask_);
+    effectTimer_.stop();
+    if (effectWorkerSucceeded_ &&
+        effectWorkerBuffer_.samples != nullptr) {
+        interleaved_buffer_free(&effectBuffer_);
+        effectBuffer_ = effectWorkerBuffer_;
+        effectWorkerBuffer_ = InterleavedBuffer{};
+        spectrum_free(
+            &effectOutputSpectrumBuffer_);
+        effectOutputSpectrumBuffer_ =
+            effectWorkerSpectrum_;
+        effectWorkerSpectrum_ = Spectrum{};
+        effectProgress_ = 1.0;
+        rebuildEffectOutputSpectrum();
+        lastEffectPlaybackTarget_ = EffectPlayback;
+        const bool playbackReady =
+            !audioReady_ ||
+            audio_clip_set_interleaved(
+                &effectClip_, &effectBuffer_);
+        setStatusText(
+            playbackReady
+                ? QStringLiteral("Built %1")
+                      .arg(effectModeName().toLower())
+                : QStringLiteral(
+                      "Effect built for export; playback is unavailable"));
+    } else {
+        interleaved_buffer_free(&effectWorkerBuffer_);
+        spectrum_free(&effectWorkerSpectrum_);
+        effectProgress_ = 0.0;
+        setStatusText(
+            QStringLiteral(
+                "Could not build the effect; try a shorter file"));
+    }
+    effectWorkerSucceeded_ = false;
+    emit effectChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::processEqWork() {
+    if (!background_task_has_work(&eqTask_)) {
+        eqTimer_.stop();
+        return;
+    }
+
+    const double progress = static_cast<double>(
+        background_task_progress(&eqTask_));
+    if (std::abs(progress - eqProgress_) > 0.0005) {
+        eqProgress_ = progress;
+        emit eqChanged();
+    }
+    if (!background_task_is_complete(&eqTask_)) {
+        return;
+    }
+
+    background_task_join(&eqTask_);
+    eqTimer_.stop();
+    if (eqWorkerSucceeded_ &&
+        eqWorkerBuffer_.samples != nullptr) {
+        interleaved_buffer_free(&eqBuffer_);
+        eqBuffer_ = eqWorkerBuffer_;
+        eqWorkerBuffer_ = InterleavedBuffer{};
+        spectrum_free(&eqOutputSpectrumBuffer_);
+        eqOutputSpectrumBuffer_ = eqWorkerSpectrum_;
+        eqWorkerSpectrum_ = Spectrum{};
+        eqProgress_ = 1.0;
+        rebuildEqOutputSpectrum();
+        lastEqPlaybackTarget_ = EqPlayback;
+        const bool playbackReady =
+            !audioReady_ ||
+            audio_clip_set_interleaved(
+                &eqClip_, &eqBuffer_);
+        setStatusText(
+            playbackReady
+                ? QStringLiteral(
+                      "Built range EQ output")
+                : QStringLiteral(
+                      "EQ built for export; playback is unavailable"));
+    } else {
+        interleaved_buffer_free(&eqWorkerBuffer_);
+        spectrum_free(&eqWorkerSpectrum_);
+        eqProgress_ = 0.0;
+        setStatusText(
+            QStringLiteral(
+                "Range EQ processing did not complete"));
+    }
+    eqWorkerBands_.clear();
+    eqWorkerSucceeded_ = false;
+    emit eqChanged();
+    emit playbackChanged();
 }
 
 void SpectraController::startSpectrogramBuild() {
@@ -2727,6 +4489,12 @@ AudioClip *SpectraController::activeClip() {
     if (playbackTarget_ == FullFilePlayback) {
         return &fullFileClip_;
     }
+    if (playbackTarget_ == EffectPlayback) {
+        return &effectClip_;
+    }
+    if (playbackTarget_ == EqPlayback) {
+        return &eqClip_;
+    }
     return nullptr;
 }
 
@@ -2751,6 +4519,12 @@ const AudioClip *SpectraController::activeClip() const {
     }
     if (playbackTarget_ == FullFilePlayback) {
         return &fullFileClip_;
+    }
+    if (playbackTarget_ == EffectPlayback) {
+        return &effectClip_;
+    }
+    if (playbackTarget_ == EqPlayback) {
+        return &eqClip_;
     }
     return nullptr;
 }

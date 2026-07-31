@@ -1,5 +1,6 @@
 #include "audio/reconstruction_cache.h"
 #include "platform/background_task.h"
+#include "platform/parallel_for.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,11 @@
 typedef struct {
     int completed_steps;
 } WorkerFixture;
+
+typedef struct {
+    unsigned int *visits;
+    SpectraAtomicBoolean *saw_nonzero_worker;
+} ParallelFixture;
 
 static void complete_worker(BackgroundTaskControl *control,
                             void *context) {
@@ -35,6 +41,23 @@ static void cancellable_worker(BackgroundTaskControl *control,
     WorkerFixture *fixture = (WorkerFixture *)context;
     while (!background_task_cancel_requested(control)) {
         fixture->completed_steps++;
+    }
+}
+
+static void visit_parallel_range(
+    size_t begin,
+    size_t end,
+    unsigned int worker_index,
+    void *context) {
+    ParallelFixture *fixture = (ParallelFixture *)context;
+    if (worker_index > 0U &&
+        fixture->saw_nonzero_worker != NULL) {
+        spectra_atomic_boolean_store(
+            fixture->saw_nonzero_worker,
+            true);
+    }
+    for (size_t index = begin; index < end; ++index) {
+        fixture->visits[index]++;
     }
 }
 
@@ -84,6 +107,77 @@ static int test_background_cancellation(void) {
     background_task_cancel_and_join(&task);
     ASSERT_TRUE(!background_task_has_work(&task),
                 "cancel and join should release worker state");
+    return 0;
+}
+
+static int test_parallel_for(void) {
+    SpectraAtomicBoolean flag;
+    spectra_atomic_boolean_init(&flag, false);
+    ASSERT_TRUE(!spectra_atomic_boolean_load(&flag),
+                "atomic boolean should initialize false");
+    spectra_atomic_boolean_store(&flag, true);
+    ASSERT_TRUE(spectra_atomic_boolean_load(&flag),
+                "atomic boolean should publish cancellation safely");
+
+    const size_t item_count = 4096U;
+    unsigned int *visits = (unsigned int *)calloc(
+        item_count,
+        sizeof(*visits));
+    ASSERT_TRUE(visits != NULL,
+                "parallel test should allocate visit counters");
+    ParallelFixture fixture = {.visits = visits};
+
+    spectra_set_parallel_thread_limit(1U);
+    ASSERT_TRUE(spectra_effective_worker_count() == 1U,
+                "single-thread mode should remain available");
+    ASSERT_TRUE(spectra_parallel_for(
+                    item_count,
+                    64U,
+                    visit_parallel_range,
+                    &fixture),
+                "single-thread parallel-for fallback should run");
+    for (size_t index = 0U; index < item_count; ++index) {
+        ASSERT_TRUE(visits[index] == 1U,
+                    "single-thread fallback should visit each item once");
+        visits[index] = 0U;
+    }
+
+    spectra_set_parallel_thread_limit(0U);
+    ASSERT_TRUE(spectra_effective_worker_count() >= 1U &&
+                    spectra_effective_worker_count() <=
+                        spectra_hardware_thread_count(),
+                "automatic workers should respect hardware capacity");
+    ASSERT_TRUE(spectra_parallel_for(
+                    item_count,
+                    64U,
+                    visit_parallel_range,
+                    &fixture),
+                "automatic parallel-for should run");
+    for (size_t index = 0U; index < item_count; ++index) {
+        ASSERT_TRUE(visits[index] == 1U,
+                    "parallel execution should visit each item once");
+        visits[index] = 0U;
+    }
+
+    SpectraAtomicBoolean saw_nonzero_worker;
+    spectra_atomic_boolean_init(
+        &saw_nonzero_worker, false);
+    fixture.saw_nonzero_worker = &saw_nonzero_worker;
+    ASSERT_TRUE(spectra_parallel_for_limited(
+                    item_count,
+                    64U,
+                    1U,
+                    visit_parallel_range,
+                    &fixture),
+                "operation-local worker caps should run");
+    ASSERT_TRUE(!spectra_atomic_boolean_load(
+                    &saw_nonzero_worker),
+                "an operation-local cap should prevent extra workers");
+    for (size_t index = 0U; index < item_count; ++index) {
+        ASSERT_TRUE(visits[index] == 1U,
+                    "limited execution should visit each item once");
+    }
+    free(visits);
     return 0;
 }
 
@@ -164,6 +258,7 @@ static int test_reconstruction_cache(void) {
 int main(void) {
     if (test_background_completion() != 0) return 1;
     if (test_background_cancellation() != 0) return 1;
+    if (test_parallel_for() != 0) return 1;
     if (test_reconstruction_cache() != 0) return 1;
     puts("All runtime tests passed.");
     return 0;

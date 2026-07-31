@@ -1,7 +1,9 @@
 #include "dsp/fft.h"
 
+#include "dsp/fft_plan.h"
 #include "dsp/signal_utils.h"
 #include "dsp/windowing.h"
+#include "platform/parallel_for.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -11,6 +13,64 @@
 #endif
 
 #define MAX_FFT_SIZE 16384U
+
+typedef struct {
+    const float *samples;
+    const float *window;
+    const SpectraFftPlan *plan;
+    float *worker_real;
+    float *worker_imaginary;
+    double *worker_power;
+    size_t regular_frame_count;
+    size_t last_frame_start;
+    size_t hop_size;
+    size_t bin_count;
+    double power_scale;
+} AveragedSpectrumContext;
+
+static void accumulate_spectrum_frames(
+    size_t begin,
+    size_t end,
+    unsigned int worker_index,
+    void *context_pointer) {
+    AveragedSpectrumContext *context =
+        (AveragedSpectrumContext *)context_pointer;
+    const unsigned int fft_size = context->plan->size;
+    float *real = context->worker_real +
+        (size_t)worker_index * fft_size;
+    float *imaginary = context->worker_imaginary +
+        (size_t)worker_index * fft_size;
+    double *power_sum = context->worker_power +
+        (size_t)worker_index * context->bin_count;
+
+    for (size_t frame = begin; frame < end; ++frame) {
+        const size_t frame_start =
+            frame < context->regular_frame_count
+                ? frame * context->hop_size
+                : context->last_frame_start;
+        for (unsigned int index = 0U;
+             index < fft_size;
+             ++index) {
+            real[index] =
+                context->samples[frame_start + (size_t)index] *
+                context->window[index];
+            imaginary[index] = 0.0f;
+        }
+
+        spectra_fft_forward(context->plan, real, imaginary);
+        for (size_t bin = 0U;
+             bin < context->bin_count;
+             ++bin) {
+            const double real_part = (double)real[bin];
+            const double imaginary_part =
+                (double)imaginary[bin];
+            power_sum[bin] +=
+                (real_part * real_part +
+                 imaginary_part * imaginary_part) *
+                context->power_scale;
+        }
+    }
+}
 
 static unsigned int reverse_bits(unsigned int value, unsigned int bits) {
     unsigned int reversed = 0;
@@ -150,17 +210,31 @@ Spectrum compute_averaged_magnitude_spectrum(
     const size_t frame_count =
         regular_frame_count + (needs_end_frame ? 1U : 0U);
 
-    float *window = (float *)calloc(fft_size, sizeof(float));
-    float *real = (float *)calloc(fft_size, sizeof(float));
-    float *imaginary = (float *)calloc(fft_size, sizeof(float));
-    double *power_sum =
-        (double *)calloc((size_t)fft_size / 2U, sizeof(double));
-    if (window == NULL || real == NULL || imaginary == NULL ||
-        power_sum == NULL) {
+    const size_t bin_count = (size_t)fft_size / 2U;
+    unsigned int worker_count =
+        spectra_parallel_worker_count(
+            frame_count,
+            4U);
+    float *window =
+        (float *)calloc(fft_size, sizeof(float));
+    float *worker_real = (float *)calloc(
+        (size_t)worker_count * fft_size,
+        sizeof(float));
+    float *worker_imaginary = (float *)calloc(
+        (size_t)worker_count * fft_size,
+        sizeof(float));
+    double *worker_power = (double *)calloc(
+        (size_t)worker_count * bin_count,
+        sizeof(double));
+    SpectraFftPlan plan = {0};
+    if (window == NULL || worker_real == NULL ||
+        worker_imaginary == NULL || worker_power == NULL ||
+        !spectra_fft_plan_init(&plan, fft_size)) {
         free(window);
-        free(real);
-        free(imaginary);
-        free(power_sum);
+        free(worker_real);
+        free(worker_imaginary);
+        free(worker_power);
+        spectra_fft_plan_free(&plan);
         return spectrum;
     }
 
@@ -175,27 +249,25 @@ Spectrum compute_averaged_magnitude_spectrum(
             : 1.0f / (float)fft_size;
     const double power_scale = (double)scale * (double)scale;
 
-    for (size_t frame = 0U; frame < frame_count; ++frame) {
-        const size_t frame_start =
-            frame < regular_frame_count
-                ? frame * hop_size
-                : last_frame_start;
-        for (unsigned int index = 0U; index < fft_size; ++index) {
-            real[index] =
-                samples[frame_start + (size_t)index] * window[index];
-            imaginary[index] = 0.0f;
-        }
-
-        fft_radix2(real, imaginary, fft_size);
-        for (size_t bin = 0U; bin < (size_t)fft_size / 2U; ++bin) {
-            const double real_part = (double)real[bin];
-            const double imaginary_part = (double)imaginary[bin];
-            power_sum[bin] +=
-                (real_part * real_part +
-                 imaginary_part * imaginary_part) *
-                power_scale;
-        }
-    }
+    AveragedSpectrumContext context = {
+        .samples = samples,
+        .window = window,
+        .plan = &plan,
+        .worker_real = worker_real,
+        .worker_imaginary = worker_imaginary,
+        .worker_power = worker_power,
+        .regular_frame_count = regular_frame_count,
+        .last_frame_start = last_frame_start,
+        .hop_size = hop_size,
+        .bin_count = bin_count,
+        .power_scale = power_scale,
+    };
+    spectra_parallel_for_limited(
+        frame_count,
+        4U,
+        worker_count,
+        accumulate_spectrum_frames,
+        &context);
 
     spectrum.count = (size_t)fft_size / 2U;
     spectrum.frequencies =
@@ -205,22 +277,31 @@ Spectrum compute_averaged_magnitude_spectrum(
     if (spectrum.frequencies == NULL || spectrum.magnitudes == NULL) {
         spectrum_free(&spectrum);
         free(window);
-        free(real);
-        free(imaginary);
-        free(power_sum);
+        free(worker_real);
+        free(worker_imaginary);
+        free(worker_power);
+        spectra_fft_plan_free(&plan);
         return spectrum;
     }
 
     for (size_t bin = 0U; bin < spectrum.count; ++bin) {
+        double power_sum = 0.0;
+        for (unsigned int worker = 0U;
+             worker < worker_count;
+             ++worker) {
+            power_sum += worker_power[
+                (size_t)worker * bin_count + bin];
+        }
         spectrum.frequencies[bin] =
             ((float)bin * (float)sample_rate) / (float)fft_size;
         spectrum.magnitudes[bin] =
-            sqrtf((float)(power_sum[bin] / (double)frame_count));
+            sqrtf((float)(power_sum / (double)frame_count));
     }
 
     free(window);
-    free(real);
-    free(imaginary);
-    free(power_sum);
+    free(worker_real);
+    free(worker_imaginary);
+    free(worker_power);
+    spectra_fft_plan_free(&plan);
     return spectrum;
 }

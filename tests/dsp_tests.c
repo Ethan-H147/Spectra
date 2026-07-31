@@ -7,12 +7,21 @@
 #include "dsp/harmonic_resynthesis.h"
 #include "dsp/pitch_detection.h"
 #include "dsp/signal_utils.h"
+#include "dsp/spectral_effects.h"
 #include "dsp/stft_reconstruction.h"
 #include "dsp/windowing.h"
 #include "dsp/waveform_summary.h"
+#include "platform/parallel_for.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #define ASSERT_TRUE(condition, message) \
     do { \
@@ -254,6 +263,344 @@ static float root_mean_square_error(const SampleBuffer *left, const SampleBuffer
         sum += difference * difference;
     }
     return sqrtf((float)(sum / (double)left->count));
+}
+
+static float dominant_interleaved_frequency(
+    const InterleavedBuffer *audio) {
+    if (audio == NULL || audio->samples == NULL ||
+        audio->frame_count == 0U ||
+        audio->channel_count != 1U) {
+        return 0.0f;
+    }
+
+    Spectrum spectrum = compute_averaged_magnitude_spectrum(
+        audio->samples,
+        audio->frame_count,
+        audio->sample_rate);
+    size_t strongest_bin = 0U;
+    for (size_t bin = 1U; bin < spectrum.count; ++bin) {
+        if (spectrum.magnitudes[bin] >
+            spectrum.magnitudes[strongest_bin]) {
+            strongest_bin = bin;
+        }
+    }
+    const float frequency =
+        spectrum.count > 0U
+            ? spectrum.frequencies[strongest_bin]
+            : 0.0f;
+    spectrum_free(&spectrum);
+    return frequency;
+}
+
+static int test_playback_rate_pitch_shift(void) {
+    const unsigned int sample_rate = 4096U;
+    const size_t frame_count = 16384U;
+    float samples[16384] = {0};
+    for (size_t frame = 0U; frame < frame_count; ++frame) {
+        const float time =
+            (float)frame / (float)sample_rate;
+        samples[frame] =
+            0.6f *
+            sinf(
+                2.0f * 3.14159265358979323846f *
+                220.0f * time);
+    }
+    InterleavedBuffer source = {
+        .samples = samples,
+        .frame_count = frame_count,
+        .sample_rate = sample_rate,
+        .channel_count = 1U,
+    };
+    InterleavedBuffer shifted = {0};
+    ASSERT_TRUE(
+        playback_rate_pitch_shift(
+            &source, 2.0f, &shifted, NULL, NULL),
+        "playback-rate pitch shifting should produce audio");
+    ASSERT_TRUE(
+        shifted.frame_count == frame_count / 2U &&
+            shifted.channel_count == 1U &&
+            shifted.sample_rate == sample_rate,
+        "double-speed playback should halve duration and preserve the audio format");
+    ASSERT_TRUE(
+        fabsf(
+            dominant_interleaved_frequency(&shifted) -
+            440.0f) < 2.0f,
+        "double-speed playback should raise a sine by one octave");
+    interleaved_buffer_free(&shifted);
+    return 0;
+}
+
+static int test_phase_vocoder_pitch_shift(void) {
+    const unsigned int sample_rate = 4096U;
+    const size_t frame_count = 16384U;
+    float samples[16384] = {0};
+    for (size_t frame = 0U; frame < frame_count; ++frame) {
+        const float time =
+            (float)frame / (float)sample_rate;
+        samples[frame] =
+            0.6f *
+            sinf(
+                2.0f * 3.14159265358979323846f *
+                220.0f * time);
+    }
+    InterleavedBuffer source = {
+        .samples = samples,
+        .frame_count = frame_count,
+        .sample_rate = sample_rate,
+        .channel_count = 1U,
+    };
+    InterleavedBuffer shifted = {0};
+    ASSERT_TRUE(
+        phase_vocoder_pitch_shift(
+            &source,
+            2.0f,
+            1024U,
+            256U,
+            &shifted,
+            NULL,
+            NULL),
+        "phase-vocoder pitch shifting should produce audio");
+    ASSERT_TRUE(
+        shifted.frame_count == frame_count &&
+            shifted.channel_count == source.channel_count,
+        "phase-vocoder pitch shifting should preserve duration and channels");
+    ASSERT_TRUE(
+        fabsf(
+            dominant_interleaved_frequency(&shifted) -
+            440.0f) < 4.0f,
+        "a one-octave phase-vocoder shift should double the dominant frequency");
+    interleaved_buffer_free(&shifted);
+    return 0;
+}
+
+static int test_parallel_phase_vocoder_matches_single_thread(void) {
+    const unsigned int sample_rate = 4096U;
+    const size_t frame_count = 8192U;
+    const unsigned int channel_count = 2U;
+    float *samples = (float *)calloc(
+        frame_count * channel_count,
+        sizeof(float));
+    ASSERT_TRUE(samples != NULL,
+                "stereo phase-vocoder test should allocate audio");
+    for (size_t frame = 0U; frame < frame_count; ++frame) {
+        const float time =
+            (float)frame / (float)sample_rate;
+        samples[frame * channel_count] =
+            0.55f * sinf(
+                2.0f * (float)M_PI * 220.0f * time);
+        samples[frame * channel_count + 1U] =
+            0.45f * sinf(
+                2.0f * (float)M_PI * 330.0f * time);
+    }
+    const InterleavedBuffer source = {
+        .samples = samples,
+        .frame_count = frame_count,
+        .sample_rate = sample_rate,
+        .channel_count = channel_count,
+    };
+    InterleavedBuffer serial = {0};
+    InterleavedBuffer parallel = {0};
+
+    spectra_set_parallel_thread_limit(1U);
+    const bool serial_ok = phase_vocoder_pitch_shift(
+        &source,
+        1.5f,
+        1024U,
+        256U,
+        &serial,
+        NULL,
+        NULL);
+    spectra_set_parallel_thread_limit(0U);
+    const bool parallel_ok = phase_vocoder_pitch_shift(
+        &source,
+        1.5f,
+        1024U,
+        256U,
+        &parallel,
+        NULL,
+        NULL);
+    ASSERT_TRUE(serial_ok && parallel_ok,
+                "serial and parallel pitch shifting should both succeed");
+    ASSERT_TRUE(
+        serial.frame_count == parallel.frame_count &&
+            serial.channel_count == parallel.channel_count,
+        "parallel pitch shifting should preserve the serial output shape");
+    const size_t sample_count =
+        serial.frame_count * serial.channel_count;
+    for (size_t index = 0U; index < sample_count; ++index) {
+        ASSERT_TRUE(
+            fabsf(serial.samples[index] -
+                  parallel.samples[index]) < 1.0e-6f,
+            "parallel pitch shifting should match the serial algorithm");
+    }
+
+    interleaved_buffer_free(&serial);
+    interleaved_buffer_free(&parallel);
+    free(samples);
+    return 0;
+}
+
+static int test_analytic_frequency_shift(void) {
+    const unsigned int sample_rate = 4096U;
+    const size_t frame_count = 16384U;
+    float samples[16384] = {0};
+    for (size_t frame = 0U; frame < frame_count; ++frame) {
+        const float time =
+            (float)frame / (float)sample_rate;
+        samples[frame] =
+            0.6f *
+            sinf(
+                2.0f * 3.14159265358979323846f *
+                300.0f * time);
+    }
+    InterleavedBuffer source = {
+        .samples = samples,
+        .frame_count = frame_count,
+        .sample_rate = sample_rate,
+        .channel_count = 1U,
+    };
+    InterleavedBuffer shifted = {0};
+    ASSERT_TRUE(
+        analytic_frequency_shift(
+            &source,
+            175.0f,
+            1024U,
+            256U,
+            &shifted,
+            NULL,
+            NULL),
+        "analytic frequency shifting should produce audio");
+    ASSERT_TRUE(
+        shifted.frame_count == frame_count &&
+            shifted.channel_count == source.channel_count,
+        "frequency shifting should preserve duration and channels");
+    ASSERT_TRUE(
+        fabsf(
+            dominant_interleaved_frequency(&shifted) -
+            475.0f) < 4.0f,
+        "frequency shifting should add the requested hertz offset");
+    interleaved_buffer_free(&shifted);
+    return 0;
+}
+
+static float measured_tone_amplitude(
+    const InterleavedBuffer *audio,
+    float frequency,
+    size_t start,
+    size_t count) {
+    double sine = 0.0;
+    double cosine = 0.0;
+    for (size_t index = 0U; index < count; ++index) {
+        const size_t frame = start + index;
+        const double phase =
+            2.0 * 3.14159265358979323846 *
+            (double)frequency * (double)frame /
+            (double)audio->sample_rate;
+        const double sample =
+            audio->samples[
+                frame *
+                (size_t)audio->channel_count];
+        sine += sample * sin(phase);
+        cosine += sample * cos(phase);
+    }
+    return (float)(
+        2.0 * sqrt(sine * sine + cosine * cosine) /
+        (double)count);
+}
+
+static int test_spectral_range_equalizer(void) {
+    const unsigned int sample_rate = 8192U;
+    const size_t frame_count = 32768U;
+    float samples[32768] = {0};
+    for (size_t frame = 0U;
+         frame < frame_count;
+         ++frame) {
+        const float time =
+            (float)frame / (float)sample_rate;
+        samples[frame] =
+            0.08f *
+                sinf(
+                    2.0f *
+                    3.14159265358979323846f *
+                    256.0f * time) +
+            0.08f *
+                sinf(
+                    2.0f *
+                    3.14159265358979323846f *
+                    1536.0f * time);
+    }
+    InterleavedBuffer source = {
+        .samples = samples,
+        .frame_count = frame_count,
+        .sample_rate = sample_rate,
+        .channel_count = 1U,
+    };
+    const SpectralEqBand bands[] = {
+        {
+            .low_hz = 128.0f,
+            .high_hz = 512.0f,
+            .gain_db = 6.0f,
+            .enabled = true,
+        },
+        {
+            .low_hz = 192.0f,
+            .high_hz = 640.0f,
+            .gain_db = 6.0f,
+            .enabled = true,
+        },
+        {
+            .low_hz = 1200.0f,
+            .high_hz = 1800.0f,
+            .gain_db = -24.0f,
+            .enabled = false,
+        },
+    };
+    InterleavedBuffer equalized = {0};
+    ASSERT_TRUE(
+        spectral_range_equalize(
+            &source,
+            bands,
+            sizeof(bands) / sizeof(bands[0]),
+            2048U,
+            512U,
+            &equalized,
+            NULL,
+            NULL),
+        "range equalizer should produce audio");
+    ASSERT_TRUE(
+        equalized.frame_count == frame_count &&
+            equalized.channel_count ==
+                source.channel_count &&
+            equalized.sample_rate ==
+                source.sample_rate,
+        "range equalizer should preserve duration and format");
+
+    const size_t measure_start = 4096U;
+    const size_t measure_count =
+        frame_count - measure_start * 2U;
+    const float boosted = measured_tone_amplitude(
+        &equalized,
+        256.0f,
+        measure_start,
+        measure_count);
+    const float unchanged = measured_tone_amplitude(
+        &equalized,
+        1536.0f,
+        measure_start,
+        measure_count);
+    ASSERT_TRUE(
+        fabsf(
+            20.0f * log10f(boosted / 0.08f) -
+            12.0f) < 0.35f,
+        "overlapping EQ bands should add their decibel gains");
+    ASSERT_TRUE(
+        fabsf(
+            20.0f * log10f(unchanged / 0.08f)) <
+            0.15f,
+        "disabled EQ bands should leave their range unchanged");
+
+    interleaved_buffer_free(&equalized);
+    return 0;
 }
 
 static int test_fourier_component_reconstruction(void) {
@@ -737,7 +1084,107 @@ static int test_global_fourier_memory_policy(void) {
     return 0;
 }
 
-int main(void) {
+static double benchmark_seconds(clock_t started) {
+    return (double)(clock() - started) / (double)CLOCKS_PER_SEC;
+}
+
+static double benchmark_signature(const InterleavedBuffer *buffer) {
+    if (buffer == NULL || buffer->samples == NULL) {
+        return 0.0;
+    }
+    const size_t sample_count =
+        buffer->frame_count * (size_t)buffer->channel_count;
+    double signature = 0.0;
+    for (size_t index = 0U; index < sample_count; ++index) {
+        signature +=
+            (double)buffer->samples[index] *
+            (double)((index % 97U) + 1U);
+    }
+    return signature;
+}
+
+static int run_effect_benchmark(void) {
+    const unsigned int sample_rate = 44100U;
+    const unsigned int channel_count = 2U;
+    const size_t frame_count = (size_t)sample_rate * 5U;
+    float *samples = (float *)calloc(
+        frame_count * (size_t)channel_count,
+        sizeof(float));
+    if (samples == NULL) {
+        fputs("Could not allocate benchmark source.\n", stderr);
+        return 1;
+    }
+
+    for (size_t frame = 0U; frame < frame_count; ++frame) {
+        const double time = (double)frame / (double)sample_rate;
+        const float left =
+            0.48f * sinf((float)(2.0 * M_PI * 220.0 * time)) +
+            0.24f * sinf((float)(2.0 * M_PI * 440.0 * time)) +
+            0.12f * sinf((float)(2.0 * M_PI * 880.0 * time));
+        const float right =
+            0.44f * sinf((float)(2.0 * M_PI * 330.0 * time)) +
+            0.22f * sinf((float)(2.0 * M_PI * 660.0 * time)) +
+            0.11f * sinf((float)(2.0 * M_PI * 990.0 * time));
+        samples[frame * 2U] = left;
+        samples[frame * 2U + 1U] = right;
+    }
+
+    const InterleavedBuffer source = {
+        .samples = samples,
+        .frame_count = frame_count,
+        .sample_rate = sample_rate,
+        .channel_count = channel_count,
+    };
+    InterleavedBuffer output = {0};
+
+    clock_t started = clock();
+    const bool pitch_ok = phase_vocoder_pitch_shift(
+        &source,
+        powf(2.0f, 7.0f / 12.0f),
+        2048U,
+        512U,
+        &output,
+        NULL,
+        NULL);
+    const double pitch_seconds = benchmark_seconds(started);
+    const double pitch_signature = benchmark_signature(&output);
+    interleaved_buffer_free(&output);
+
+    started = clock();
+    const bool frequency_ok = analytic_frequency_shift(
+        &source,
+        250.0f,
+        2048U,
+        512U,
+        &output,
+        NULL,
+        NULL);
+    const double frequency_seconds = benchmark_seconds(started);
+    const double frequency_signature =
+        benchmark_signature(&output);
+    interleaved_buffer_free(&output);
+    free(samples);
+
+    if (!pitch_ok || !frequency_ok) {
+        fputs("Effect benchmark failed.\n", stderr);
+        return 1;
+    }
+    printf(
+        "Pitch shift: %.3f s | signature %.9f\n",
+        pitch_seconds,
+        pitch_signature);
+    printf(
+        "Frequency shift: %.3f s | signature %.9f\n",
+        frequency_seconds,
+        frequency_signature);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--benchmark-effects") == 0) {
+        return run_effect_benchmark();
+    }
+
     if (test_sine_length() != 0) return 1;
     if (test_hann_window() != 0) return 1;
     if (test_additive_normalization() != 0) return 1;
@@ -752,6 +1199,11 @@ int main(void) {
     if (test_harmonic_extraction() != 0) return 1;
     if (test_harmonic_resynthesis() != 0) return 1;
     if (test_fourier_component_reconstruction() != 0) return 1;
+    if (test_playback_rate_pitch_shift() != 0) return 1;
+    if (test_phase_vocoder_pitch_shift() != 0) return 1;
+    if (test_parallel_phase_vocoder_matches_single_thread() != 0) return 1;
+    if (test_analytic_frequency_shift() != 0) return 1;
+    if (test_spectral_range_equalizer() != 0) return 1;
     if (test_global_fourier_fixed_components() != 0) return 1;
     if (test_global_fourier_dc_and_nyquist() != 0) return 1;
     if (test_stft_spectrogram_only() != 0) return 1;

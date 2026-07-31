@@ -25,6 +25,8 @@ ApplicationWindow {
         "Audio Analysis",
         "Harmonic Lab",
         "Spectrogram",
+        "Pitch & Shift",
+        "Range EQ",
         "Settings"
     ]
     readonly property var pageContexts: [
@@ -33,6 +35,8 @@ ApplicationWindow {
         "Imported source / Region",
         "Region / Reconstruction",
         "Full file / Fourier models",
+        "Full file / Spectral effects",
+        "Full file / Frequency shaping",
         "Application / Runtime"
     ]
 
@@ -78,6 +82,24 @@ ApplicationWindow {
         defaultSuffix: "wav"
         nameFilters: ["WAV audio (*.wav)"]
         onAccepted: spectra.exportFullFileFile(selectedFile)
+    }
+
+    FileDialog {
+        id: effectExportDialog
+        title: "Export processed audio"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "wav"
+        nameFilters: ["WAV audio (*.wav)"]
+        onAccepted: spectra.exportEffectFile(selectedFile)
+    }
+
+    FileDialog {
+        id: eqExportDialog
+        title: "Export range EQ audio"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "wav"
+        nameFilters: ["WAV audio (*.wav)"]
+        onAccepted: spectra.exportEqFile(selectedFile)
     }
 
     Popup {
@@ -188,6 +210,18 @@ ApplicationWindow {
                                     "details": "The page reports memory estimates, progress, retained energy, and output channels."
                                 },
                                 {
+                                    "title": "Pitch & Shift",
+                                    "summary": "Move the complete source by a pitch ratio or a fixed frequency offset.",
+                                    "steps": "Choose tape speed, pitch shift, or frequency shift; set the amount; then build.",
+                                    "details": "Compare the original and processed file before exporting the result."
+                                },
+                                {
+                                    "title": "Range EQ",
+                                    "summary": "Shape selected frequency ranges directly on the full-track spectrum.",
+                                    "steps": "Drag horizontally to add a band, then drag the band vertically to change its gain.",
+                                    "details": "Resize the edges, inspect every band in the list, and build a measured output before export."
+                                },
+                                {
                                     "title": "Settings",
                                     "summary": "Inspect runtime values and configure display and FFT memory.",
                                     "steps": "Set text scale or the whole-file FFT memory ceiling.",
@@ -260,7 +294,7 @@ ApplicationWindow {
 
                     Text {
                         Layout.fillWidth: true
-                        text: "1–5  Workspaces    F1  Help    F11  Full screen    Space  Play synthesizer"
+                        text: "1–6  Workspaces    F1  Help    F11  Full screen    Space  Play synthesizer"
                         color: theme.muted
                         font.family: theme.bodyFamily
                         font.pixelSize: theme.fontSize(11)
@@ -331,6 +365,21 @@ ApplicationWindow {
     Shortcut {
         sequence: "5"
         onActivated: spectra.setCurrentPage(4)
+    }
+
+    Shortcut {
+        sequence: "6"
+        onActivated: spectra.setCurrentPage(5)
+    }
+
+    Shortcut {
+        sequence: "7"
+        onActivated: spectra.setCurrentPage(6)
+    }
+
+    Shortcut {
+        sequence: "8"
+        onActivated: spectra.setCurrentPage(7)
     }
 
     DropArea {
@@ -410,7 +459,9 @@ ApplicationWindow {
                         ["☷", "Synthesizer"],
                         ["⌁", "Audio Analysis"],
                         ["▥", "Harmonic Lab"],
-                        ["▦", "Spectrogram"]
+                        ["▦", "Spectrogram"],
+                        ["⇄", "Pitch & Shift"],
+                        ["≋", "Range EQ"]
                     ]
 
                     Rectangle {
@@ -486,12 +537,12 @@ ApplicationWindow {
                     Layout.bottomMargin: theme.space2
                     Layout.preferredHeight: 40
                     radius: 3
-                    color: spectra.currentPage === 5
+                    color: spectra.currentPage === 7
                         ? theme.raisedPanel
                         : (settingsHover.hovered ? Qt.lighter(theme.sidebar, 1.15) : "transparent")
 
                     Rectangle {
-                        visible: spectra.currentPage === 5
+                        visible: spectra.currentPage === 7
                         anchors.left: parent.left
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
@@ -507,7 +558,7 @@ ApplicationWindow {
 
                         Text {
                             text: "⚙"
-                            color: spectra.currentPage === 5 ? theme.text : theme.muted
+                            color: spectra.currentPage === 7 ? theme.text : theme.muted
                             font.family: theme.bodyFamily
                             font.pixelSize: theme.fontSize(13)
                         }
@@ -515,7 +566,7 @@ ApplicationWindow {
                         Text {
                             Layout.fillWidth: true
                             text: "Settings"
-                            color: spectra.currentPage === 5 ? theme.text : theme.muted
+                            color: spectra.currentPage === 7 ? theme.text : theme.muted
                             font.family: theme.bodyFamily
                             font.pixelSize: theme.fontSize(13)
                         }
@@ -526,7 +577,7 @@ ApplicationWindow {
                     }
 
                     TapHandler {
-                        onTapped: spectra.setCurrentPage(5)
+                        onTapped: spectra.setCurrentPage(7)
                     }
                 }
             }
@@ -613,6 +664,8 @@ ApplicationWindow {
                             case 2: return analysisPage
                             case 3: return harmonicPage
                             case 4: return spectrogramPage
+                            case 5: return pitchShiftPage
+                            case 6: return rangeEqPage
                             default: return settingsPage
                         }
                     }
@@ -635,6 +688,12 @@ ApplicationWindow {
                     }
                     function onExportFullFileRequested() {
                         fullFileExportDialog.open()
+                    }
+                    function onExportEffectRequested() {
+                        effectExportDialog.open()
+                    }
+                    function onExportEqRequested() {
+                        eqExportDialog.open()
                     }
                 }
             }
@@ -708,6 +767,16 @@ ApplicationWindow {
     Component {
         id: spectrogramPage
         SpectrogramPage {}
+    }
+
+    Component {
+        id: pitchShiftPage
+        PitchShiftPage {}
+    }
+
+    Component {
+        id: rangeEqPage
+        RangeEqPage {}
     }
 
     Component {

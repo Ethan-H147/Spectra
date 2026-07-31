@@ -2,9 +2,12 @@
 #define SPECTRA_QT_SPECTRA_CONTROLLER_H
 
 #include <QObject>
+#include <QStringList>
 #include <QTimer>
 #include <QUrl>
 #include <QVariantList>
+
+#include <vector>
 
 extern "C" {
 #include "audio/audio_engine.h"
@@ -15,8 +18,10 @@ extern "C" {
 #include "dsp/global_fourier_reconstruction.h"
 #include "dsp/harmonic_analysis.h"
 #include "dsp/pitch_detection.h"
+#include "dsp/spectral_effects.h"
 #include "dsp/stft_reconstruction.h"
 #include "platform/background_task.h"
+#include "platform/parallel_for.h"
 }
 
 class SpectraController final : public QObject {
@@ -26,6 +31,11 @@ class SpectraController final : public QObject {
     Q_PROPERTY(bool audioReady READ audioReady NOTIFY audioReadyChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
     Q_PROPERTY(double textScale READ textScale WRITE setTextScale NOTIFY textScaleChanged)
+    Q_PROPERTY(int performanceMode READ performanceMode NOTIFY performanceChanged)
+    Q_PROPERTY(QString performanceModeName READ performanceModeName NOTIFY performanceChanged)
+    Q_PROPERTY(int processingWorkerCount READ processingWorkerCount NOTIFY performanceChanged)
+    Q_PROPERTY(int hardwareThreadCount READ hardwareThreadCount CONSTANT)
+    Q_PROPERTY(QString processingBackendName READ processingBackendName CONSTANT)
 
     Q_PROPERTY(double synthFrequency READ synthFrequency WRITE setSynthFrequency NOTIFY synthChanged)
     Q_PROPERTY(double synthDuration READ synthDuration WRITE setSynthDuration NOTIFY synthChanged)
@@ -107,6 +117,45 @@ class SpectraController final : public QObject {
     Q_PROPERTY(bool fullFilePlaying READ fullFilePlaying NOTIFY playbackChanged)
     Q_PROPERTY(int fullFilePlaybackSelection READ fullFilePlaybackSelection NOTIFY playbackChanged)
 
+    Q_PROPERTY(bool effectProcessing READ effectProcessing NOTIFY effectChanged)
+    Q_PROPERTY(bool effectReady READ effectReady NOTIFY effectChanged)
+    Q_PROPERTY(int effectMode READ effectMode NOTIFY effectChanged)
+    Q_PROPERTY(QString effectModeName READ effectModeName NOTIFY effectChanged)
+    Q_PROPERTY(double effectSemitones READ effectSemitones NOTIFY effectChanged)
+    Q_PROPERTY(double effectPitchFactor READ effectPitchFactor NOTIFY effectChanged)
+    Q_PROPERTY(double effectFrequencyShift READ effectFrequencyShift NOTIFY effectChanged)
+    Q_PROPERTY(double effectProgress READ effectProgress NOTIFY effectChanged)
+    Q_PROPERTY(double effectOutputDuration READ effectOutputDuration NOTIFY effectChanged)
+    Q_PROPERTY(int effectOutputChannels READ effectOutputChannels NOTIFY effectChanged)
+    Q_PROPERTY(int effectWindowSize READ effectWindowSize CONSTANT)
+    Q_PROPERTY(int effectHopSize READ effectHopSize CONSTANT)
+    Q_PROPERTY(QVariantList effectOriginalSpectrum READ effectOriginalSpectrum NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(QVariantList effectTransformedSpectrum READ effectTransformedSpectrum NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(double effectSpectrumMaximumFrequency READ effectSpectrumMaximumFrequency NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(double effectOriginalPeakFrequency READ effectOriginalPeakFrequency NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(double effectTransformedPeakFrequency READ effectTransformedPeakFrequency NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(bool effectSpectrumPreview READ effectSpectrumPreview NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(bool effectSpectrumAnalyzing READ effectSpectrumAnalyzing NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(bool effectPlaying READ effectPlaying NOTIFY playbackChanged)
+    Q_PROPERTY(int effectPlaybackSelection READ effectPlaybackSelection NOTIFY playbackChanged)
+
+    Q_PROPERTY(QStringList eqPresetNames READ eqPresetNames CONSTANT)
+    Q_PROPERTY(int eqPreset READ eqPreset NOTIFY eqChanged)
+    Q_PROPERTY(QVariantList eqBands READ eqBands NOTIFY eqChanged)
+    Q_PROPERTY(int eqBandCount READ eqBandCount NOTIFY eqChanged)
+    Q_PROPERTY(bool eqProcessing READ eqProcessing NOTIFY eqChanged)
+    Q_PROPERTY(bool eqReady READ eqReady NOTIFY eqChanged)
+    Q_PROPERTY(double eqProgress READ eqProgress NOTIFY eqChanged)
+    Q_PROPERTY(double eqOutputDuration READ eqOutputDuration NOTIFY eqChanged)
+    Q_PROPERTY(int eqOutputChannels READ eqOutputChannels NOTIFY eqChanged)
+    Q_PROPERTY(QVariantList eqOriginalSpectrum READ eqOriginalSpectrum NOTIFY eqSpectrumChanged)
+    Q_PROPERTY(QVariantList eqTransformedSpectrum READ eqTransformedSpectrum NOTIFY eqSpectrumChanged)
+    Q_PROPERTY(double eqSpectrumMaximumFrequency READ eqSpectrumMaximumFrequency NOTIFY eqSpectrumChanged)
+    Q_PROPERTY(bool eqSpectrumPreview READ eqSpectrumPreview NOTIFY eqSpectrumChanged)
+    Q_PROPERTY(bool eqSpectrumAnalyzing READ eqSpectrumAnalyzing NOTIFY eqSpectrumChanged)
+    Q_PROPERTY(bool eqPlaying READ eqPlaying NOTIFY playbackChanged)
+    Q_PROPERTY(int eqPlaybackSelection READ eqPlaybackSelection NOTIFY playbackChanged)
+
 public:
     explicit SpectraController(QObject *parent = nullptr);
     ~SpectraController() override;
@@ -115,6 +164,11 @@ public:
     bool audioReady() const;
     QString statusText() const;
     double textScale() const;
+    int performanceMode() const;
+    QString performanceModeName() const;
+    int processingWorkerCount() const;
+    int hardwareThreadCount() const;
+    QString processingBackendName() const;
 
     double synthFrequency() const;
     double synthDuration() const;
@@ -196,8 +250,48 @@ public:
     bool fullFilePlaying() const;
     int fullFilePlaybackSelection() const;
 
+    bool effectProcessing() const;
+    bool effectReady() const;
+    int effectMode() const;
+    QString effectModeName() const;
+    double effectSemitones() const;
+    double effectPitchFactor() const;
+    double effectFrequencyShift() const;
+    double effectProgress() const;
+    double effectOutputDuration() const;
+    int effectOutputChannels() const;
+    int effectWindowSize() const;
+    int effectHopSize() const;
+    QVariantList effectOriginalSpectrum() const;
+    QVariantList effectTransformedSpectrum() const;
+    double effectSpectrumMaximumFrequency() const;
+    double effectOriginalPeakFrequency() const;
+    double effectTransformedPeakFrequency() const;
+    bool effectSpectrumPreview() const;
+    bool effectSpectrumAnalyzing() const;
+    bool effectPlaying() const;
+    int effectPlaybackSelection() const;
+
+    QStringList eqPresetNames() const;
+    int eqPreset() const;
+    QVariantList eqBands() const;
+    int eqBandCount() const;
+    bool eqProcessing() const;
+    bool eqReady() const;
+    double eqProgress() const;
+    double eqOutputDuration() const;
+    int eqOutputChannels() const;
+    QVariantList eqOriginalSpectrum() const;
+    QVariantList eqTransformedSpectrum() const;
+    double eqSpectrumMaximumFrequency() const;
+    bool eqSpectrumPreview() const;
+    bool eqSpectrumAnalyzing() const;
+    bool eqPlaying() const;
+    int eqPlaybackSelection() const;
+
     Q_INVOKABLE void setCurrentPage(int page);
     Q_INVOKABLE void setTextScale(double scale);
+    Q_INVOKABLE void setPerformanceMode(int mode);
     Q_INVOKABLE void setSynthFrequency(double frequency);
     Q_INVOKABLE void setSynthDuration(double duration);
     Q_INVOKABLE void setSynthGain(double gain);
@@ -235,6 +329,36 @@ public:
     Q_INVOKABLE void toggleFullFilePlayback();
     Q_INVOKABLE void seekFullFilePlayback(double position);
     Q_INVOKABLE bool exportFullFileFile(const QUrl &url);
+    Q_INVOKABLE void setEffectMode(int mode);
+    Q_INVOKABLE void setEffectSemitones(double semitones);
+    Q_INVOKABLE void setEffectFrequencyShift(double shiftHz);
+    Q_INVOKABLE void buildEffect();
+    Q_INVOKABLE void playEffectOriginal();
+    Q_INVOKABLE void playEffectProcessed();
+    Q_INVOKABLE void toggleEffectPlayback();
+    Q_INVOKABLE void seekEffectPlayback(double position);
+    Q_INVOKABLE bool exportEffectFile(const QUrl &url);
+    Q_INVOKABLE int addEqBand(
+        double lowHz,
+        double highHz,
+        double gainDb = 0.0);
+    Q_INVOKABLE void updateEqBand(
+        int index,
+        double lowHz,
+        double highHz,
+        double gainDb);
+    Q_INVOKABLE void setEqBandEnabled(
+        int index,
+        bool enabled);
+    Q_INVOKABLE void removeEqBand(int index);
+    Q_INVOKABLE void clearEqBands();
+    Q_INVOKABLE void applyEqPreset(int preset);
+    Q_INVOKABLE void buildEq();
+    Q_INVOKABLE void playEqOriginal();
+    Q_INVOKABLE void playEqProcessed();
+    Q_INVOKABLE void toggleEqPlayback();
+    Q_INVOKABLE void seekEqPlayback(double position);
+    Q_INVOKABLE bool exportEqFile(const QUrl &url);
     Q_INVOKABLE void stopPlayback();
     Q_INVOKABLE void importAudioFile(const QUrl &url);
     Q_INVOKABLE bool exportSynthFile(const QUrl &url);
@@ -244,12 +368,17 @@ signals:
     void audioReadyChanged();
     void statusTextChanged();
     void textScaleChanged();
+    void performanceChanged();
     void synthChanged();
     void synthVisualizationChanged();
     void sourceChanged();
     void analysisChanged();
     void reconstructionChanged();
     void fullFileChanged();
+    void effectChanged();
+    void effectSpectrumChanged();
+    void eqChanged();
+    void eqSpectrumChanged();
     void playbackChanged();
 
 private:
@@ -262,6 +391,8 @@ private:
         OriginalFramePlayback,
         FourierFramePlayback,
         FullFilePlayback,
+        EffectPlayback,
+        EqPlayback,
     };
 
     enum FullFileWork {
@@ -284,6 +415,7 @@ private:
     SampleBuffer selectedRegion() const;
     void resetAnalysis();
     void resetFullFile();
+    void resetEffect();
     void cacheFullFileOutput();
     bool restoreFullFileOutput();
     void clearFullFileOutput();
@@ -304,6 +436,26 @@ private:
         SampleBuffer right,
         unsigned int channelCount,
         double retainedEnergy);
+    void clearEffectOutput();
+    static void processEffectInBackground(
+        BackgroundTaskControl *control,
+        void *context);
+    static void processEffectSourceSpectrumInBackground(
+        BackgroundTaskControl *control,
+        void *context);
+    void processEffectWork();
+    void processEffectSourceSpectrumWork();
+    void rebuildEffectSourceSpectrum();
+    void rebuildEffectSpectrumPreview();
+    void rebuildEffectOutputSpectrum();
+    void resetEq();
+    void clearEqOutput();
+    void rebuildEqSpectrumPreview();
+    void rebuildEqOutputSpectrum();
+    static void processEqInBackground(
+        BackgroundTaskControl *control,
+        void *context);
+    void processEqWork();
     int requiredGlobalAnalysisComponents() const;
     bool hasReusableGlobalAnalysis() const;
     unsigned int fullFileReconstructionChannels() const;
@@ -320,6 +472,7 @@ private:
     bool audioReady_ = false;
     QString statusText_;
     double textScale_ = 1.00;
+    int performanceMode_ = 0;
 
     double synthFrequency_ = 440.0;
     double synthDuration_ = 1.2;
@@ -395,11 +548,53 @@ private:
     qsizetype fullFileFrameCount_ = 0;
     QUrl spectrogramImageUrl_;
 
+    BackgroundTask effectTask_ = {};
+    BackgroundTask effectSpectrumTask_ = {};
+    InterleavedBuffer effectWorkerBuffer_ = {};
+    InterleavedBuffer effectBuffer_ = {};
+    Spectrum effectSourceSpectrumWorker_ = {};
+    Spectrum effectSourceSpectrumBuffer_ = {};
+    Spectrum effectWorkerSpectrum_ = {};
+    Spectrum effectOutputSpectrumBuffer_ = {};
+    AudioClip effectClip_ = {};
+    int effectMode_ = 0;
+    double effectSemitones_ = 7.0;
+    double effectFrequencyShift_ = 250.0;
+    double effectProgress_ = 0.0;
+    int effectWorkerMode_ = 0;
+    double effectWorkerAmount_ = 0.0;
+    bool effectWorkerSucceeded_ = false;
+    bool effectSourceSpectrumWorkerSucceeded_ = false;
+    QVariantList effectOriginalSpectrum_;
+    QVariantList effectTransformedSpectrum_;
+    double effectOriginalPeakFrequency_ = 0.0;
+    double effectTransformedPeakFrequency_ = 0.0;
+    bool effectSpectrumPreview_ = false;
+
+    std::vector<SpectralEqBand> eqBands_;
+    std::vector<SpectralEqBand> eqWorkerBands_;
+    int eqPreset_ = -1;
+    BackgroundTask eqTask_ = {};
+    InterleavedBuffer eqWorkerBuffer_ = {};
+    InterleavedBuffer eqBuffer_ = {};
+    Spectrum eqWorkerSpectrum_ = {};
+    Spectrum eqOutputSpectrumBuffer_ = {};
+    AudioClip eqClip_ = {};
+    QVariantList eqTransformedSpectrum_;
+    double eqProgress_ = 0.0;
+    bool eqWorkerSucceeded_ = false;
+    bool eqSpectrumPreview_ = false;
+
     PlaybackTarget playbackTarget_ = NoPlayback;
     PlaybackTarget lastFullFilePlaybackTarget_ = SourcePlayback;
+    PlaybackTarget lastEffectPlaybackTarget_ = SourcePlayback;
+    PlaybackTarget lastEqPlaybackTarget_ = SourcePlayback;
     QTimer synthRebuildTimer_;
     QTimer playbackTimer_;
     QTimer fullFileTimer_;
+    QTimer effectTimer_;
+    QTimer effectSpectrumTimer_;
+    QTimer eqTimer_;
 };
 
 #endif
