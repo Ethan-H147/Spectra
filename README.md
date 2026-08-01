@@ -25,11 +25,11 @@ The accompanying `.sha256` file can be used to verify that the ZIP downloaded wi
 
 ### Spectrum movement
 
-![Original and predicted spectra in the Pitch and Shift comparison](docs/images/spectrum-movement.png)
+![Chopin's Andante spianato et Grande polonaise brillante in the Pitch and Shift spectrum comparison](docs/images/spectrum-movement.png)
 
 ### Full-track audio analysis
 
-![Audio Analysis workspace with waveform, spectrum, and detected peaks](docs/images/audio-analysis.png)
+![Chopin's Andante spianato et Grande polonaise brillante in the Audio Analysis workspace](docs/images/audio-analysis.png)
 
 ## Functions
 
@@ -203,7 +203,7 @@ build\Release\dsp_benchmark.exe --single
 ## Known limitations
 
 - Imported-file decoding and selected-region analysis run on the UI thread.
-- Whole-file FFT and STFT builds are admitted by the configurable memory ceiling instead of a fixed duration limit; the active model estimate is shown before building.
+- There is no fixed duration maximum. Whole-file FFT and STFT builds are admitted by the configurable memory ceiling; the active model estimate is shown before building.
 - Fixed FFT memory grows with the zero-padded transform size and retained-bin capacity, while STFT reconstruction memory grows linearly with duration and channel count.
 - Spectral-energy selection ranks the complete one-sided FFT.
 - The processing-performance mode persists after exit; other settings and reconstruction caches do not.
