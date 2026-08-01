@@ -19,16 +19,57 @@ Item {
         hoverEnabled: true
         Accessible.name: accessibleName
 
-        contentItem: Text {
-            text: bandIconButton.text
-            color: bandIconButton.enabled
+        contentItem: Canvas {
+            property string glyph: bandIconButton.text
+            property color glyphColor: bandIconButton.enabled
                 ? theme.text
                 : theme.quiet
-            font.family: "Segoe UI Symbol"
-            font.pixelSize: theme.fontSize(17)
-            font.weight: Font.DemiBold
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+
+            implicitWidth: 18
+            implicitHeight: 18
+
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+                const centerX = width * 0.5
+                const centerY = height * 0.5
+                const halfSize = 5
+                ctx.strokeStyle = glyphColor
+                ctx.lineWidth = 1.8
+                ctx.lineCap = "round"
+                ctx.beginPath()
+                if (glyph === "×") {
+                    ctx.moveTo(
+                        centerX - halfSize,
+                        centerY - halfSize)
+                    ctx.lineTo(
+                        centerX + halfSize,
+                        centerY + halfSize)
+                    ctx.moveTo(
+                        centerX + halfSize,
+                        centerY - halfSize)
+                    ctx.lineTo(
+                        centerX - halfSize,
+                        centerY + halfSize)
+                } else {
+                    ctx.moveTo(
+                        centerX - halfSize, centerY)
+                    ctx.lineTo(
+                        centerX + halfSize, centerY)
+                    if (glyph === "+") {
+                        ctx.moveTo(
+                            centerX, centerY - halfSize)
+                        ctx.lineTo(
+                            centerX, centerY + halfSize)
+                    }
+                }
+                ctx.stroke()
+            }
+
+            onGlyphChanged: requestPaint()
+            onGlyphColorChanged: requestPaint()
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
         }
 
         background: Rectangle {

@@ -100,6 +100,8 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/main.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrogram_pdf_export.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrogram_pdf_export.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_item.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_item.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_lod.cpp"
@@ -288,6 +290,27 @@ if(SPECTRA_BUILD_QT_FRONTEND)
     endif()
 endif()
 
+if(SPECTRA_BUILD_QT_FRONTEND)
+    add_executable(
+        spectrogram_pdf_tests
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/spectrogram_pdf_tests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrogram_pdf_export.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrogram_pdf_export.h"
+    )
+    target_include_directories(
+        spectrogram_pdf_tests
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+    target_link_libraries(
+        spectrogram_pdf_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+    )
+    spectra_enable_warnings(spectrogram_pdf_tests)
+endif()
+
 file(
     GLOB_RECURSE
     SPECTRA_DSP_SOURCES
@@ -381,3 +404,6 @@ add_test(NAME dsp_tests COMMAND dsp_tests)
 add_test(NAME audio_import_tests COMMAND audio_import_tests)
 add_test(NAME runtime_tests COMMAND runtime_tests)
 add_test(NAME spectrum_lod_tests COMMAND spectrum_lod_tests)
+if(TARGET spectrogram_pdf_tests)
+    add_test(NAME spectrogram_pdf_tests COMMAND spectrogram_pdf_tests)
+endif()

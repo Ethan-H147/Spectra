@@ -68,7 +68,7 @@ ApplicationWindow {
 
     FileDialog {
         id: fourierExportDialog
-        title: "Export Fourier frame"
+        title: "Export evolving Fourier reconstruction"
         fileMode: FileDialog.SaveFile
         defaultSuffix: "wav"
         nameFilters: ["WAV audio (*.wav)"]
@@ -82,6 +82,15 @@ ApplicationWindow {
         defaultSuffix: "wav"
         nameFilters: ["WAV audio (*.wav)"]
         onAccepted: spectra.exportFullFileFile(selectedFile)
+    }
+
+    FileDialog {
+        id: spectrogramPdfExportDialog
+        title: "Export spectrogram as landscape PDF"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "pdf"
+        nameFilters: ["PDF document (*.pdf)"]
+        onAccepted: spectra.exportSpectrogramPdf(selectedFile)
     }
 
     FileDialog {
@@ -200,14 +209,14 @@ ApplicationWindow {
                                 {
                                     "title": "Harmonic Lab",
                                     "summary": "Compare harmonic and phase-preserving reconstructions.",
-                                    "steps": "Analyze a region first, then play each model from the shared transport.",
-                                    "details": "Adjust Top-N before rebuilding or exporting the Fourier frame."
+                                    "steps": "Choose a 1–8 second passage, build the comparison, then audition the original and both models.",
+                                    "details": "The harmonic model keeps a steady set of integer multiples. The evolving Fourier model preserves change across overlapping frames; adjust Top-N to control detail."
                                 },
                                 {
                                     "title": "Spectrogram",
                                     "summary": "Build a mono FFT, stereo FFT, or time-varying STFT model.",
                                     "steps": "Choose a model and bin or energy budget, then build it.",
-                                    "details": "The page reports memory estimates, progress, retained energy, and output channels."
+                                    "details": "The page reports memory estimates, progress, retained energy, and output channels. Export the spectrogram as a landscape PDF for sharing or printing."
                                 },
                                 {
                                     "title": "Pitch & Shift",
@@ -218,8 +227,8 @@ ApplicationWindow {
                                 {
                                     "title": "Range EQ",
                                     "summary": "Shape selected frequency ranges directly on the full-track spectrum.",
-                                    "steps": "Drag horizontally to add a band, then drag the band vertically to change its gain.",
-                                    "details": "Resize the edges, inspect every band in the list, and build a measured output before export."
+                                    "steps": "Use Fit to frame meaningful spectrum content, or Full to show 0 Hz through Nyquist. Drag horizontally to add a band, then drag the band vertically to change its gain.",
+                                    "details": "Use the wheel to zoom, Shift-drag or right-drag to pan, resize band edges, and build a measured output before export."
                                 },
                                 {
                                     "title": "Settings",
@@ -698,6 +707,9 @@ ApplicationWindow {
                     }
                     function onExportFullFileRequested() {
                         fullFileExportDialog.open()
+                    }
+                    function onExportSpectrogramPdfRequested() {
+                        spectrogramPdfExportDialog.open()
                     }
                     function onExportEffectRequested() {
                         effectExportDialog.open()

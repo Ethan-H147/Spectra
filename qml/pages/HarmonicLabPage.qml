@@ -12,8 +12,20 @@ Item {
         id: theme
     }
 
+    function choosePassageDuration(duration) {
+        const bounded = Math.min(
+            duration, spectra.sourceDuration)
+        if (spectra.regionStart + bounded
+                > spectra.sourceDuration) {
+            spectra.setRegionStart(Math.max(
+                0, spectra.sourceDuration - bounded))
+        }
+        spectra.setRegionDuration(bounded)
+    }
+
     ScrollView {
         id: scrollView
+
         anchors.fill: parent
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -24,50 +36,154 @@ Item {
 
             Panel {
                 Layout.fillWidth: true
-                visible: !spectra.analysisReady
-                title: "Reconstruction needs an analyzed region"
-                subtitle: spectra.sourceLoaded
-                    ? "Select and analyze a region in Audio Analysis"
-                    : "Import audio in Audio Analysis"
+                visible: !spectra.sourceLoaded
+                title: "Import audio to begin"
+                subtitle: "Compare two simplified reconstructions of a selected passage"
 
                 AppButton {
-                    text: "Open Audio Analysis"
+                    text: "Open Audio Analysis to import"
                     onClicked: spectra.setCurrentPage(2)
                 }
             }
 
+            Panel {
+                Layout.fillWidth: true
+                visible: spectra.sourceLoaded
+                title: "1  Choose a passage"
+                subtitle: "Both models reconstruct this actual span of audio—nothing is looped"
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: theme.space1
+
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Text {
+                            text: "Start  "
+                                + spectra.regionStart.toFixed(2)
+                                + " s"
+                            color: theme.text
+                            font.family: theme.headingFamily
+                            font.pixelSize: theme.fontSize(11)
+                            font.weight: Font.DemiBold
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+
+                        Text {
+                            text: "Selected  "
+                                + spectra.regionDuration.toFixed(2)
+                                + " s"
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(10.5)
+                        }
+                    }
+
+                    Slider {
+                        Layout.fillWidth: true
+                        from: 0
+                        to: Math.max(
+                            0.01,
+                            spectra.sourceDuration
+                                - spectra.regionDuration)
+                        value: spectra.regionStart
+                        onMoved: spectra.setRegionStart(value)
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: theme.space1
+
+                        Text {
+                            text: "Length"
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(10.5)
+                        }
+
+                        Repeater {
+                            model: [1, 2, 4, 8]
+
+                            AppButton {
+                                required property int modelData
+
+                                Layout.preferredWidth: 64
+                                text: modelData + " s"
+                                quiet: Math.abs(
+                                    spectra.regionDuration
+                                        - modelData) > 0.01
+                                enabled: spectra.sourceDuration
+                                    >= modelData
+                                onClicked:
+                                    root.choosePassageDuration(
+                                        modelData)
+                            }
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+
+                        AppButton {
+                            Layout.preferredWidth: 190
+                            text: spectra.analysisReady
+                                ? "Rebuild comparison"
+                                : "Build comparison"
+                            onClicked: spectra.analyzeRegion()
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: spectra.analysisReady
+                text: "2  Compare the results"
+                color: theme.text
+                font.family: theme.headingFamily
+                font.pixelSize: theme.fontSize(16)
+                font.weight: Font.DemiBold
+            }
+
             GridLayout {
                 Layout.fillWidth: true
-                columns: width < 1000 ? 2 : 4
+                visible: spectra.analysisReady
+                columns: width < 900 ? 1 : 3
                 columnSpacing: 12
                 rowSpacing: 12
 
                 Panel {
                     Layout.fillWidth: true
-                    title: "Original region"
-                    subtitle: spectra.analysisReady
-                        ? spectra.regionStart.toFixed(2) + "–"
-                            + (spectra.regionStart + spectra.regionDuration).toFixed(2) + " s"
-                        : "No analyzed region"
+                    title: "Original passage"
+                    subtitle: spectra.regionStart.toFixed(2)
+                        + "–"
+                        + (spectra.regionStart
+                            + spectra.regionDuration).toFixed(2)
+                        + " s  ·  Full detail"
 
                     AppButton {
                         Layout.fillWidth: true
-                        text: "Play region"
-                        enabled: spectra.analysisReady
+                        text: "Play original"
                         onClicked: spectra.playRegion()
                     }
                 }
 
                 Panel {
                     Layout.fillWidth: true
-                    title: "Harmonic model"
+                    title: "Harmonic-only model"
                     subtitle: spectra.harmonicReady
-                        ? spectra.detectedHarmonicCount + " / " + spectra.harmonicCount + " detected"
+                        ? spectra.detectedHarmonicCount
+                            + " / " + spectra.harmonicCount
+                            + " partials  ·  No phase or noise"
                         : "No stable pitched model"
 
                     AppButton {
                         Layout.fillWidth: true
-                        text: "Play harmonics"
+                        text: "Play harmonic model"
                         enabled: spectra.harmonicReady
                         onClicked: spectra.playHarmonicModel()
                     }
@@ -75,29 +191,16 @@ Item {
 
                 Panel {
                     Layout.fillWidth: true
-                    title: "Original FFT frame"
+                    title: "Evolving Fourier model"
                     subtitle: spectra.fourierFrameReady
-                        ? spectra.fourierMaximumComponents + " ranked components"
-                        : "Frame unavailable"
+                        ? "Top-"
+                            + spectra.fourierSelectedComponents
+                            + " bins in every short frame"
+                        : "Reconstruction unavailable"
 
                     AppButton {
                         Layout.fillWidth: true
-                        text: "Play frame"
-                        enabled: spectra.fourierFrameReady
-                        onClicked: spectra.playOriginalFrame()
-                    }
-                }
-
-                Panel {
-                    Layout.fillWidth: true
-                    title: "Fourier frame"
-                    subtitle: spectra.fourierFrameReady
-                        ? "Top-" + spectra.fourierSelectedComponents + " with phase"
-                        : "Frame unavailable"
-
-                    AppButton {
-                        Layout.fillWidth: true
-                        text: "Play Fourier"
+                        text: "Play Fourier model"
                         enabled: spectra.fourierFrameReady
                         onClicked: spectra.playFourierFrame()
                     }
@@ -110,7 +213,6 @@ Item {
                 title: spectra.labPlaybackTitle
                 playing: spectra.regionPlaying
                     || spectra.harmonicPlaying
-                    || spectra.framePlaying
                     || spectra.fourierPlaying
                 position: spectra.playbackPosition
                 duration: spectra.playbackDuration > 0
@@ -123,24 +225,44 @@ Item {
                 }
             }
 
+            Text {
+                Layout.fillWidth: true
+                visible: spectra.analysisReady
+                text: "3  Inspect and refine"
+                color: theme.text
+                font.family: theme.headingFamily
+                font.pixelSize: theme.fontSize(16)
+                font.weight: Font.DemiBold
+            }
+
             GridLayout {
                 Layout.fillWidth: true
+                visible: spectra.analysisReady
                 columns: width < 960 ? 1 : 2
                 columnSpacing: theme.space2
                 rowSpacing: theme.space2
 
                 Panel {
                     Layout.fillWidth: true
-                    Layout.minimumHeight: 500
-                    title: "Integer-harmonic reconstruction"
+                    Layout.minimumHeight: 540
+                    title: "Harmonic-only model"
                     subtitle: spectra.harmonicReady
                         ? spectra.analysisPitch + " fundamental"
-                        : "Analyze a pitched region first"
+                        : "This passage has no stable detected pitch"
 
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         spacing: theme.space1
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "A steady tonal fingerprint built from the detected fundamental and its integer multiples. It intentionally removes noise, phase, transients, and changing articulation."
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(10.5)
+                            wrapMode: Text.Wrap
+                        }
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -148,7 +270,7 @@ Item {
 
                             AppButton {
                                 Layout.fillWidth: true
-                                text: "Play reconstruction"
+                                text: "Play model"
                                 enabled: spectra.harmonicReady
                                 onClicked: spectra.playHarmonicModel()
                             }
@@ -158,7 +280,8 @@ Item {
                                 text: "Export WAV"
                                 quiet: true
                                 enabled: spectra.harmonicReady
-                                onClicked: root.exportHarmonicRequested()
+                                onClicked:
+                                    root.exportHarmonicRequested()
                             }
                         }
 
@@ -168,51 +291,51 @@ Item {
 
                             Text {
                                 Layout.preferredWidth: 48
-                                text: "#"
+                                text: "Partial"
                                 color: theme.quiet
                                 font.family: theme.headingFamily
-                                font.pixelSize: theme.fontSize(10.5)
-                                font.weight: Font.DemiBold
+                                font.pixelSize: theme.fontSize(10)
                             }
                             Text {
                                 Layout.fillWidth: true
                                 text: "Expected"
                                 color: theme.quiet
                                 font.family: theme.headingFamily
-                                font.pixelSize: theme.fontSize(10.5)
-                                font.weight: Font.DemiBold
+                                font.pixelSize: theme.fontSize(10)
                             }
                             Text {
                                 Layout.fillWidth: true
                                 text: "Detected"
                                 color: theme.quiet
                                 font.family: theme.headingFamily
-                                font.pixelSize: theme.fontSize(10.5)
-                                font.weight: Font.DemiBold
+                                font.pixelSize: theme.fontSize(10)
                             }
                             Text {
-                                Layout.preferredWidth: 80
+                                Layout.preferredWidth: 72
                                 text: "Level"
                                 color: theme.quiet
                                 font.family: theme.headingFamily
-                                font.pixelSize: theme.fontSize(10.5)
-                                font.weight: Font.DemiBold
+                                font.pixelSize: theme.fontSize(10)
                             }
                         }
 
                         ListView {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
+                            Layout.minimumHeight: 320
                             clip: true
                             model: spectra.extractedHarmonics
                             spacing: theme.space1
 
                             delegate: Rectangle {
                                 required property var modelData
+
                                 width: ListView.view.width
                                 height: 36
                                 radius: 3
-                                color: modelData.detected ? theme.raisedPanel : theme.canvas
+                                color: modelData.detected
+                                    ? theme.raisedPanel
+                                    : theme.canvas
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -223,33 +346,41 @@ Item {
                                     Text {
                                         Layout.preferredWidth: 40
                                         text: "H" + modelData.number
-                                        color: modelData.detected ? theme.success : theme.quiet
+                                        color: modelData.detected
+                                            ? theme.success
+                                            : theme.quiet
                                         font.family: theme.headingFamily
-                                        font.pixelSize: theme.fontSize(11)
-                                        font.weight: Font.DemiBold
+                                        font.pixelSize: theme.fontSize(10.5)
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: Number(modelData.expected).toFixed(1) + " Hz"
+                                        text: Number(
+                                            modelData.expected).toFixed(1)
+                                            + " Hz"
                                         color: theme.text
                                         font.family: theme.bodyFamily
-                                        font.pixelSize: theme.fontSize(11)
+                                        font.pixelSize: theme.fontSize(10.5)
                                     }
                                     Text {
                                         Layout.fillWidth: true
                                         text: modelData.detected
-                                            ? Number(modelData.detectedFrequency).toFixed(1) + " Hz"
+                                            ? Number(modelData.detectedFrequency)
+                                                .toFixed(1) + " Hz"
                                             : "—"
-                                        color: modelData.detected ? theme.text : theme.quiet
+                                        color: modelData.detected
+                                            ? theme.text : theme.quiet
                                         font.family: theme.bodyFamily
-                                        font.pixelSize: theme.fontSize(11)
+                                        font.pixelSize: theme.fontSize(10.5)
                                     }
                                     Text {
-                                        Layout.preferredWidth: 72
-                                        text: modelData.detected ? Number(modelData.db).toFixed(1) + " dB" : "—"
+                                        Layout.preferredWidth: 64
+                                        text: modelData.detected
+                                            ? Number(modelData.db)
+                                                .toFixed(1) + " dB"
+                                            : "—"
                                         color: theme.muted
                                         font.family: theme.bodyFamily
-                                        font.pixelSize: theme.fontSize(11)
+                                        font.pixelSize: theme.fontSize(10.5)
                                     }
                                 }
                             }
@@ -259,9 +390,9 @@ Item {
 
                 Panel {
                     Layout.fillWidth: true
-                    Layout.minimumHeight: 500
-                    title: "Phase-preserving Fourier frame"
-                    subtitle: "Ranked complex FFT coefficients"
+                    Layout.minimumHeight: 540
+                    title: "Evolving Fourier model"
+                    subtitle: "Tracks change with overlapping short-time FFT frames"
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -270,7 +401,18 @@ Item {
 
                         Text {
                             Layout.fillWidth: true
-                            text: "Selected components  " + spectra.fourierSelectedComponents
+                            text: "Keeps the strongest frequency bins and their phase in every frame. More bins preserve more detail, noise, and transients."
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(10.5)
+                            wrapMode: Text.Wrap
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Detail  Top-"
+                                + spectra.fourierSelectedComponents
+                                + " bins per frame"
                             color: theme.text
                             font.family: theme.headingFamily
                             font.pixelSize: theme.fontSize(14)
@@ -279,33 +421,36 @@ Item {
 
                         Slider {
                             id: componentSlider
+
                             Layout.fillWidth: true
                             enabled: spectra.fourierFrameReady
                             from: 1
-                            to: Math.max(1, spectra.fourierMaximumComponents)
+                            to: Math.max(
+                                1,
+                                spectra.fourierMaximumComponents)
                             stepSize: 1
-                            value: Math.max(1, spectra.fourierSelectedComponents)
+                            value: Math.max(
+                                1,
+                                spectra.fourierSelectedComponents)
                         }
 
                         AppButton {
                             Layout.fillWidth: true
-                            text: "Rebuild Top-" + Math.round(componentSlider.value)
+                            text: "Rebuild with Top-"
+                                + Math.round(componentSlider.value)
+                                + " per frame"
                             enabled: spectra.fourierFrameReady
-                                && Math.round(componentSlider.value) !== spectra.fourierSelectedComponents
-                            onClicked: spectra.rebuildFourierFrame(Math.round(componentSlider.value))
+                                && Math.round(componentSlider.value)
+                                    !== spectra.fourierSelectedComponents
+                            onClicked: spectra.rebuildFourierFrame(
+                                Math.round(componentSlider.value))
                         }
 
                         Text {
                             Layout.fillWidth: true
-                            text: spectra.fourierFrameReady
-                                ? spectra.fourierFftSize.toLocaleString(
-                                    Qt.locale(), "f", 0)
-                                    + " samples  |  "
-                                    + spectra.fourierFrameDuration.toFixed(3)
-                                    + " s  |  "
-                                    + spectra.fourierMaximumComponents
-                                    + " available bins"
-                                : "Analyze a region containing at least eight samples."
+                            text: "2,048-sample frames  ·  512-sample hop  ·  "
+                                + spectra.regionDuration.toFixed(2)
+                                + " s output"
                             color: theme.muted
                             font.family: theme.bodyFamily
                             font.pixelSize: theme.fontSize(10.5)
@@ -318,40 +463,12 @@ Item {
                             color: theme.border
                         }
 
-                        RowLayout {
+                        Text {
                             Layout.fillWidth: true
-
-                            Text {
-                                Layout.preferredWidth: 32
-                                text: "#"
-                                color: theme.quiet
-                                font.family: theme.headingFamily
-                                font.pixelSize: theme.fontSize(10)
-                            }
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: "Frequency"
-                                color: theme.quiet
-                                font.family: theme.headingFamily
-                                font.pixelSize: theme.fontSize(10)
-                            }
-
-                            Text {
-                                Layout.preferredWidth: 72
-                                text: "Level"
-                                color: theme.quiet
-                                font.family: theme.headingFamily
-                                font.pixelSize: theme.fontSize(10)
-                            }
-
-                            Text {
-                                Layout.preferredWidth: 88
-                                text: "Phase"
-                                color: theme.quiet
-                                font.family: theme.headingFamily
-                                font.pixelSize: theme.fontSize(10)
-                            }
+                            text: "Strongest bins in the center reference frame"
+                            color: theme.quiet
+                            font.family: theme.headingFamily
+                            font.pixelSize: theme.fontSize(10)
                         }
 
                         Repeater {
@@ -371,39 +488,34 @@ Item {
                                     anchors.rightMargin: theme.space1
 
                                     Text {
-                                        Layout.preferredWidth: 24
+                                        Layout.preferredWidth: 28
                                         text: modelData.rank
                                         color: theme.text
                                         font.family: theme.headingFamily
                                         font.pixelSize: theme.fontSize(10.5)
                                     }
-
                                     Text {
                                         Layout.fillWidth: true
-                                        text: Number(
-                                            modelData.frequency).toFixed(1)
-                                            + " Hz"
+                                        text: Number(modelData.frequency)
+                                            .toFixed(1) + " Hz"
                                         color: theme.text
                                         font.family: theme.bodyFamily
                                         font.pixelSize: theme.fontSize(10.5)
                                     }
-
                                     Text {
                                         Layout.preferredWidth: 72
-                                        text: Number(
-                                            modelData.db).toFixed(1)
-                                            + " dB"
+                                        text: Number(modelData.db)
+                                            .toFixed(1) + " dB"
                                         color: theme.muted
                                         font.family: theme.bodyFamily
                                         font.pixelSize: theme.fontSize(10.5)
                                     }
-
                                     Text {
-                                        Layout.preferredWidth: 80
+                                        Layout.preferredWidth: 86
                                         text: (Number(modelData.phase) >= 0
                                             ? "+" : "")
-                                            + Number(
-                                                modelData.phase).toFixed(2)
+                                            + Number(modelData.phase)
+                                                .toFixed(2)
                                             + " rad"
                                         color: theme.muted
                                         font.family: theme.bodyFamily
@@ -411,16 +523,6 @@ Item {
                                     }
                                 }
                             }
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            visible: spectra.fourierFrameReady
-                                && spectra.fourierComponents.length === 0
-                            text: "No Fourier components selected."
-                            color: theme.muted
-                            font.family: theme.bodyFamily
-                            font.pixelSize: theme.fontSize(10.5)
                         }
 
                         Item {
@@ -433,7 +535,7 @@ Item {
 
                             AppButton {
                                 Layout.fillWidth: true
-                                text: "Play Fourier frame"
+                                text: "Play model"
                                 enabled: spectra.fourierFrameReady
                                 onClicked: spectra.playFourierFrame()
                             }
@@ -443,7 +545,8 @@ Item {
                                 text: "Export WAV"
                                 quiet: true
                                 enabled: spectra.fourierFrameReady
-                                onClicked: root.exportFourierRequested()
+                                onClicked:
+                                    root.exportFourierRequested()
                             }
                         }
                     }

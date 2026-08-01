@@ -38,10 +38,10 @@ Spectra provides eight workspaces:
 1. **Overview** reports source, analysis, reconstruction, and audio-device state.
 2. **Synthesizer** generates tones from 16 adjustable harmonics.
 3. **Audio Analysis** displays a waveform, spectrum, peaks, and pitch estimate.
-4. **Harmonic Lab** compares harmonic resynthesis with Fourier-frame reconstruction.
-5. **Spectrogram** displays STFT magnitude and builds complete-file reconstructions.
+4. **Harmonic Lab** compares harmonic-only resynthesis with an evolving Fourier reconstruction across a selectable 1–8 second passage.
+5. **Spectrogram** displays STFT magnitude, exports the visualization as a landscape PDF, and builds complete-file reconstructions.
 6. **Pitch & Shift** builds tape-speed, duration-preserving pitch, and fixed-Hz frequency effects with an overlaid before/after spectrum.
-7. **Range EQ** lets you draw smooth frequency bands directly on the full-track spectrum, stack overlapping gains, and compare predicted with measured output.
+7. **Range EQ** lets you zoom, pan, and fit the horizontal frequency axis or return to the full 0 Hz-to-Nyquist range. Draw smooth bands on the full-track spectrum, stack overlapping gains, and compare predicted with measured output.
 8. **Settings** controls text scale, the whole-file model memory limit, and processing performance.
 
 Imported audio supports WAV, MP3, OGG, and FLAC. Mono and stereo sources retain their playback channel layout. Sources with more than two channels produce mono playback and analysis buffers.
@@ -51,8 +51,8 @@ Imported audio supports WAV, MP3, OGG, and FLAC. Mono and stereo sources retain 
 | Model | Analysis scope | Selection unit | Phase | Output |
 | --- | --- | --- | --- | --- |
 | Additive synthesizer | Generated tone | 16 integer harmonics | Generated oscillator phase | Mono |
-| Harmonic resynthesis | Selected pitched region | Detected integer harmonics | Discarded | Mono |
-| Fourier frame | One centered Hann frame | Ranked complex Fourier components | Preserved | Mono frame |
+| Harmonic resynthesis | Selected pitched region | Detected integer harmonics | Discarded | Mono passage |
+| Evolving Fourier | Selected region | Ranked bins in each overlapping FFT frame | Preserved per frame | Mono passage |
 | Mono FFT | Complete audio file | Ranked one-sided FFT bins | Preserved | Mono |
 | Stereo FFT | Complete left and right channels | Ranked FFT bins per channel | Preserved | Stereo |
 | STFT | Overlapping frames | FFT bins per frame and channel | Preserved | Source channel layout |
@@ -203,10 +203,10 @@ build\Release\dsp_benchmark.exe --single
 ## Known limitations
 
 - Imported-file decoding and selected-region analysis run on the UI thread.
-- There is no fixed duration maximum. Whole-file FFT and STFT builds are admitted by the configurable memory ceiling; the active model estimate is shown before building.
+- Spectra has no fixed duration maximum. The configurable memory ceiling governs whole-file FFT and STFT builds. Spectra displays the active model estimate before processing.
 - Fixed FFT memory grows with the zero-padded transform size and retained-bin capacity, while STFT reconstruction memory grows linearly with duration and channel count.
 - Spectral-energy selection ranks the complete one-sided FFT.
-- The processing-performance mode persists after exit; other settings and reconstruction caches do not.
+- Text scale, processing-performance mode, and the whole-file model memory limit persist after exit. Reconstruction caches do not.
 - Pitch estimation requires stable periodic content.
 - Harmonic resynthesis discards phase and time-varying articulation.
 - STFT component counts apply separately to each frame and channel.

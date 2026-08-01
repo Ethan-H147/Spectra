@@ -1,4 +1,5 @@
 #include "qt/spectra_controller.h"
+#include "qt/spectrogram_pdf_export.h"
 
 #include <QBuffer>
 #include <QColor>
@@ -48,6 +49,12 @@ constexpr size_t kSpectrogramFramesPerBatch = 32U;
 constexpr size_t kReconstructionCacheLimit =
     256U * 1024U * 1024U;
 constexpr ADSREnvelope kDefaultEnvelope = {0.015f, 0.08f, 0.75f, 0.12f};
+constexpr double kMinimumTextScale = 0.90;
+constexpr double kMaximumTextScale = 1.40;
+constexpr qulonglong kMinimumModelMemoryBytes =
+    128ULL * 1024ULL * 1024ULL;
+constexpr qulonglong kMaximumModelMemoryBytes =
+    4ULL * 1024ULL * 1024ULL * 1024ULL;
 
 unsigned int threadLimitForPerformanceMode(int mode) {
     const unsigned int hardware =
@@ -718,6 +725,13 @@ void SpectraController::processEqInBackground(
 SpectraController::SpectraController(QObject *parent)
     : QObject(parent) {
     QSettings settings;
+    textScale_ = clampValue(
+        settings.value(
+            QStringLiteral("appearance/textScale"),
+            textScale_)
+            .toDouble(),
+        kMinimumTextScale,
+        kMaximumTextScale);
     performanceMode_ = std::max(
         0,
         std::min(
@@ -725,6 +739,14 @@ SpectraController::SpectraController(QObject *parent)
                 QStringLiteral("performance/mode"), 0)
                 .toInt(),
             3));
+    fullFileMemoryLimitBytes_ = std::max(
+        kMinimumModelMemoryBytes,
+        std::min(
+            settings.value(
+                QStringLiteral("models/memoryLimitBytes"),
+                fullFileMemoryLimitBytes_)
+                .toULongLong(),
+            kMaximumModelMemoryBytes));
     spectra_set_parallel_thread_limit(
         threadLimitForPerformanceMode(performanceMode_));
 
@@ -1163,7 +1185,7 @@ QString SpectraController::labPlaybackTitle() const {
         case OriginalFramePlayback:
             return QStringLiteral("Original windowed FFT frame");
         case FourierFramePlayback:
-            return QStringLiteral("Top-%1 Fourier frame")
+            return QStringLiteral("Top-%1 evolving Fourier reconstruction")
                 .arg(fourierSelectedComponents_);
         case RegionPlayback:
         default:
@@ -1554,11 +1576,16 @@ void SpectraController::setCurrentPage(int page) {
 }
 
 void SpectraController::setTextScale(double scale) {
-    const double bounded = clampValue(scale, 0.90, 1.40);
+    const double bounded = clampValue(
+        scale, kMinimumTextScale, kMaximumTextScale);
     if (qFuzzyCompare(bounded, textScale_)) {
         return;
     }
     textScale_ = bounded;
+    QSettings settings;
+    settings.setValue(
+        QStringLiteral("appearance/textScale"),
+        textScale_);
     emit textScaleChanged();
 }
 
@@ -1879,7 +1906,7 @@ void SpectraController::playFourierFrame() {
     if (audio_clip_play(&fourierClip_)) {
         playbackTarget_ = FourierFramePlayback;
         lastLabPlaybackTarget_ = FourierFramePlayback;
-        setStatusText(QStringLiteral("Playing Top-%1 Fourier frame")
+        setStatusText(QStringLiteral("Playing Top-%1 evolving Fourier reconstruction")
                           .arg(fourierSelectedComponents_));
         emit playbackChanged();
     }
@@ -1955,7 +1982,7 @@ void SpectraController::seekLabPlayback(double position) {
 
 void SpectraController::rebuildFourierFrame(int componentCount) {
     if (rebuildFourierFrameBuffer(componentCount)) {
-        setStatusText(QStringLiteral("Rebuilt frame from %1 Fourier components")
+        setStatusText(QStringLiteral("Rebuilt passage with %1 Fourier bins per frame")
                           .arg(fourierSelectedComponents_));
         emit reconstructionChanged();
         emit playbackChanged();
@@ -1989,8 +2016,8 @@ bool SpectraController::exportFourierFile(const QUrl &url) {
     const QByteArray encodedPath = wavPath.toUtf8();
     const bool exported = export_samples_to_wav(encodedPath.constData(), &fourierBuffer_);
     setStatusText(exported
-                      ? QStringLiteral("Exported Fourier frame")
-                      : QStringLiteral("Could not export Fourier frame"));
+                      ? QStringLiteral("Exported evolving Fourier reconstruction")
+                      : QStringLiteral("Could not export Fourier reconstruction"));
     return exported;
 }
 
@@ -2170,16 +2197,18 @@ void SpectraController::setFullFileEnergyTarget(double target) {
 
 void SpectraController::setFullFileMemoryLimitBytes(
     qulonglong bytes) {
-    constexpr qulonglong minimum =
-        128ULL * 1024ULL * 1024ULL;
-    constexpr qulonglong maximum =
-        4ULL * 1024ULL * 1024ULL * 1024ULL;
     const qulonglong bounded =
-        std::max(minimum, std::min(bytes, maximum));
+        std::max(
+            kMinimumModelMemoryBytes,
+            std::min(bytes, kMaximumModelMemoryBytes));
     if (bounded == fullFileMemoryLimitBytes_) {
         return;
     }
     fullFileMemoryLimitBytes_ = bounded;
+    QSettings settings;
+    settings.setValue(
+        QStringLiteral("models/memoryLimitBytes"),
+        fullFileMemoryLimitBytes_);
     setStatusText(
         QStringLiteral("Whole-file model memory limit set to %1 MB")
             .arg(static_cast<double>(bounded) /
@@ -2347,6 +2376,56 @@ bool SpectraController::exportFullFileFile(const QUrl &url) {
         exported
             ? QStringLiteral("Exported whole-file reconstruction")
             : QStringLiteral("Could not export whole-file reconstruction"));
+    return exported;
+}
+
+bool SpectraController::exportSpectrogramPdf(const QUrl &url) {
+    const QString localPath = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    if (localPath.isEmpty() || spectrogramImageUrl_.isEmpty()) {
+        setStatusText(QStringLiteral("Build the spectrogram before exporting it"));
+        return false;
+    }
+
+    const QString pdfPath = localPath.endsWith(
+                                QStringLiteral(".pdf"),
+                                Qt::CaseInsensitive)
+        ? localPath
+        : localPath + QStringLiteral(".pdf");
+    const QString encodedImage = spectrogramImageUrl_.toString();
+    const qsizetype payloadOffset = encodedImage.indexOf(QLatin1Char(','));
+    QImage spectrogram;
+    if (payloadOffset < 0 ||
+        !spectrogram.loadFromData(
+            QByteArray::fromBase64(
+                encodedImage.mid(payloadOffset + 1).toLatin1()),
+            "PNG")) {
+        setStatusText(QStringLiteral("Could not read the spectrogram image"));
+        return false;
+    }
+
+    SpectrogramPdfMetadata metadata;
+    metadata.sourceName = sourceFileName();
+    metadata.durationSeconds = sourceDuration();
+    metadata.sampleRate = sourceSampleRate();
+    metadata.channelCount = sourceChannels();
+    metadata.maximumFrequency = spectrogramMaximumFrequency();
+    metadata.windowSize = static_cast<int>(kFullFileWindowSize);
+    metadata.hopSize = static_cast<int>(kFullFileHopSize);
+    metadata.frameCount = importedAudio_.mono.count == 0U
+        ? 0
+        : static_cast<qsizetype>(
+              1U +
+              (importedAudio_.mono.count - 1U) /
+                  static_cast<size_t>(kFullFileHopSize));
+
+    const bool exported = exportSpectrogramLandscapePdf(
+        pdfPath,
+        spectrogram,
+        metadata);
+    setStatusText(
+        exported
+            ? QStringLiteral("Exported landscape spectrogram PDF")
+            : QStringLiteral("Could not export the spectrogram PDF"));
     return exported;
 }
 
@@ -3239,7 +3318,9 @@ void SpectraController::rebuildRegionModels(const SampleBuffer &region) {
 
     if (analyze_fourier_frame(&region, &fourierAnalysis_)) {
         if (audioReady_) {
-            audio_clip_set_samples(&originalFrameClip_, &fourierAnalysis_.windowed_frame);
+            audio_clip_set_samples(
+                &originalFrameClip_,
+                &fourierAnalysis_.windowed_frame);
         }
         rebuildFourierFrameBuffer(
             static_cast<int>(std::min<size_t>(25U, fourierAnalysis_.component_count)));
@@ -3257,9 +3338,31 @@ bool SpectraController::rebuildFourierFrameBuffer(int componentCount) {
     audio_clip_unload(&fourierClip_);
     audio_clip_init(&fourierClip_);
     sample_buffer_free(&fourierBuffer_);
-    fourierBuffer_ = reconstruct_fourier_frame(
-        &fourierAnalysis_,
-        static_cast<size_t>(bounded));
+    const SampleBuffer region = selectedRegion();
+    StftReconstructionJob job = {};
+    stft_reconstruction_job_init(&job);
+    const bool started = stft_reconstruction_job_begin(
+        &job,
+        &region,
+        kFullFileWindowSize,
+        kFullFileHopSize,
+        bounded,
+        false,
+        0U,
+        0U,
+        0.0f);
+    if (!started) {
+        fourierSelectedComponents_ = 0;
+        return false;
+    }
+    while (job.active && !job.complete && !job.failed) {
+        stft_reconstruction_job_process(&job, 64U);
+    }
+    if (job.complete && !job.failed) {
+        fourierBuffer_ =
+            stft_reconstruction_job_take_output(&job);
+    }
+    stft_reconstruction_job_free(&job);
     if (fourierBuffer_.samples == nullptr) {
         fourierSelectedComponents_ = 0;
         return false;

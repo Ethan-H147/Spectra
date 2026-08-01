@@ -15,6 +15,15 @@ ColumnLayout {
     property real creationStartHz: 0
     property real creationEndHz: 0
     property bool creatingBand: false
+    readonly property real sourceMaximumFrequency: Math.max(
+        1, spectra.eqSpectrumMaximumFrequency)
+    property real viewMinimumFrequency: 0
+    property real viewMaximumFrequency: sourceMaximumFrequency
+    property real previousSourceMaximumFrequency: 0
+    readonly property bool viewIsFullRange:
+        Math.abs(viewMinimumFrequency) < 0.5
+        && Math.abs(viewMaximumFrequency
+            - sourceMaximumFrequency) < 0.5
 
     spacing: theme.space1
 
@@ -39,7 +48,122 @@ ColumnLayout {
         bandOverlay.requestPaint()
     }
 
+    function setView(minimum, maximum) {
+        const worldMaximum = sourceMaximumFrequency
+        const minimumSpan = Math.min(100, worldMaximum)
+        let span = Math.max(minimumSpan, maximum - minimum)
+        if (span >= worldMaximum) {
+            viewMinimumFrequency = 0
+            viewMaximumFrequency = worldMaximum
+            return
+        }
+        let boundedMinimum = minimum
+        if (boundedMinimum < 0)
+            boundedMinimum = 0
+        if (boundedMinimum + span > worldMaximum)
+            boundedMinimum = worldMaximum - span
+        viewMinimumFrequency = boundedMinimum
+        viewMaximumFrequency = boundedMinimum + span
+    }
+
+    function resetView() {
+        viewMinimumFrequency = 0
+        viewMaximumFrequency = sourceMaximumFrequency
+    }
+
+    function fittedMaximumFrequency() {
+        const original = spectra.eqOriginalSpectrum
+        const transformed = spectra.eqTransformedSpectrum
+        const count = Math.max(
+            original.length, transformed.length)
+        if (count < 2)
+            return sourceMaximumFrequency
+
+        let peakDb = -100
+        for (let index = 0; index < count; ++index) {
+            if (index < original.length)
+                peakDb = Math.max(peakDb, original[index])
+            if (index < transformed.length)
+                peakDb = Math.max(peakDb, transformed[index])
+        }
+
+        // Keep content that is visibly above the graph floor, while
+        // ignoring a long tail of near-silent high-frequency bins.
+        const contentFloorDb = Math.max(-84, peakDb - 54)
+        let lastVisibleIndex = 0
+        for (let index = 0; index < count; ++index) {
+            const originalDb = index < original.length
+                ? original[index] : -100
+            const transformedDb = index < transformed.length
+                ? transformed[index] : -100
+            if (Math.max(originalDb, transformedDb)
+                    >= contentFloorDb) {
+                lastVisibleIndex = index
+            }
+        }
+
+        let contentMaximum = lastVisibleIndex
+            / (count - 1) * sourceMaximumFrequency
+        const bands = spectra.eqBands
+        for (let index = 0; index < bands.length; ++index)
+            contentMaximum = Math.max(
+                contentMaximum, bands[index].highHz)
+
+        const minimumSpan = Math.min(
+            1000, sourceMaximumFrequency)
+        const padding = Math.max(120, contentMaximum * 0.12)
+        return Math.min(
+            sourceMaximumFrequency,
+            Math.max(minimumSpan, contentMaximum + padding))
+    }
+
+    function fitContentView() {
+        setView(0, fittedMaximumFrequency())
+    }
+
+    function zoomAt(frequency, scale) {
+        const span = viewMaximumFrequency
+            - viewMinimumFrequency
+        const anchor = Math.max(
+            viewMinimumFrequency,
+            Math.min(viewMaximumFrequency, frequency))
+        const fraction = span > 0
+            ? (anchor - viewMinimumFrequency) / span
+            : 0.5
+        const nextSpan = span * scale
+        setView(
+            anchor - fraction * nextSpan,
+            anchor + (1 - fraction) * nextSpan)
+    }
+
+    function panByPixels(deltaX) {
+        if (grid.plotWidth <= 0)
+            return
+        const span = viewMaximumFrequency
+            - viewMinimumFrequency
+        const deltaFrequency = -deltaX
+            / grid.plotWidth * span
+        setView(
+            viewMinimumFrequency + deltaFrequency,
+            viewMaximumFrequency + deltaFrequency)
+    }
+
+    function viewLabel() {
+        return frequencyLabel(viewMinimumFrequency)
+            + " – " + frequencyLabel(viewMaximumFrequency)
+    }
+
     onSelectedBandChanged: repaint()
+    onViewMinimumFrequencyChanged: repaint()
+    onViewMaximumFrequencyChanged: repaint()
+    onSourceMaximumFrequencyChanged: {
+        if (Math.abs(sourceMaximumFrequency
+                - previousSourceMaximumFrequency) > 0.5) {
+            previousSourceMaximumFrequency =
+                sourceMaximumFrequency
+            resetView()
+        }
+    }
 
     RowLayout {
         Layout.fillWidth: true
@@ -97,12 +221,72 @@ ColumnLayout {
                 : (root.dragMode === "low"
                     || root.dragMode === "high"
                     ? "Drag the edge to resize"
-                    : "Drag empty space to add a band")
+                    : (root.dragMode === "pan"
+                        ? "Drag horizontally to pan"
+                        : "Wheel to zoom · Shift/right-drag to pan"))
             color: root.dragMode.length > 0
                 ? theme.accent
                 : theme.muted
             font.family: theme.bodyFamily
             font.pixelSize: theme.fontSize(10)
+        }
+
+        AppButton {
+            Layout.preferredWidth: 32
+            compact: true
+            text: "−"
+            quiet: true
+            enabled: !root.viewIsFullRange
+            accessibleName: "Zoom out horizontal axis"
+            toolTip: "Zoom out"
+            onClicked: root.zoomAt(
+                root.viewMinimumFrequency, 1.6)
+        }
+
+        Text {
+            Layout.preferredWidth: 126
+            text: root.viewLabel()
+            color: theme.text
+            font.family: theme.bodyFamily
+            font.pixelSize: theme.fontSize(9.5)
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+        }
+
+        AppButton {
+            Layout.preferredWidth: 32
+            compact: true
+            text: "+"
+            quiet: true
+            enabled: root.viewMaximumFrequency
+                - root.viewMinimumFrequency > 100.5
+            accessibleName: "Zoom in horizontal axis"
+            toolTip: "Zoom in"
+            onClicked: root.zoomAt(
+                root.viewMinimumFrequency, 0.625)
+        }
+
+        AppButton {
+            Layout.preferredWidth: 46
+            compact: true
+            text: "Fit"
+            quiet: true
+            enabled: spectra.sourceLoaded
+                && spectra.eqOriginalSpectrum.length > 0
+            accessibleName: "Fit spectrum content"
+            toolTip: "Fit meaningful spectrum and EQ bands"
+            onClicked: root.fitContentView()
+        }
+
+        AppButton {
+            Layout.preferredWidth: 50
+            compact: true
+            text: "Full"
+            quiet: true
+            enabled: !root.viewIsFullRange
+            accessibleName: "Show full horizontal axis"
+            toolTip: "Show 0 Hz to Nyquist"
+            onClicked: root.resetView()
         }
 
         Rectangle {
@@ -160,29 +344,41 @@ ColumnLayout {
                 120, width - plotX - 18)
             readonly property real plotHeight: Math.max(
                 80, height - plotY - 38)
+            readonly property real minimumFrequency:
+                root.viewMinimumFrequency
             readonly property real maximumFrequency:
-                Math.max(
-                    1,
-                    spectra.eqSpectrumMaximumFrequency)
+                root.viewMaximumFrequency
+            readonly property real frequencySpan: Math.max(
+                0.0001,
+                maximumFrequency - minimumFrequency)
 
             function xForFrequency(frequency) {
                 return plotX
-                    + Math.max(
-                        0,
+                    + (Math.max(
+                        minimumFrequency,
                         Math.min(
                             maximumFrequency,
                             frequency))
-                        / maximumFrequency
+                        - minimumFrequency)
+                        / frequencySpan
                         * plotWidth
             }
 
             function frequencyForX(x) {
                 return Math.max(
-                    0,
+                    minimumFrequency,
                     Math.min(
                         maximumFrequency,
-                        (x - plotX) / plotWidth
-                            * maximumFrequency))
+                        minimumFrequency
+                            + (x - plotX) / plotWidth
+                                * frequencySpan))
+            }
+
+            function containsPlotPoint(x, y) {
+                return x >= plotX
+                    && x <= plotX + plotWidth
+                    && y >= plotY
+                    && y <= plotY + plotHeight
             }
 
             function yForGain(gain) {
@@ -206,7 +402,8 @@ ColumnLayout {
                     const fraction = index / 5
                     const x = plotX + fraction * plotWidth
                     const frequency =
-                        fraction * maximumFrequency
+                        minimumFrequency
+                            + fraction * frequencySpan
                     ctx.strokeStyle = "#35373D"
                     ctx.beginPath()
                     ctx.moveTo(x, plotY)
@@ -264,8 +461,9 @@ ColumnLayout {
             visible: spectra.sourceLoaded
                 && spectra.eqOriginalSpectrum.length > 0
             spectrum: spectra.eqOriginalSpectrum
-            spectrumMaximumFrequency: grid.maximumFrequency
-            minimumFrequency: 0
+            spectrumMaximumFrequency:
+                root.sourceMaximumFrequency
+            minimumFrequency: grid.minimumFrequency
             maximumFrequency: grid.maximumFrequency
             minimumDb: -90
             maximumDb: 0
@@ -283,8 +481,9 @@ ColumnLayout {
             visible: spectra.sourceLoaded
                 && spectra.eqTransformedSpectrum.length > 0
             spectrum: spectra.eqTransformedSpectrum
-            spectrumMaximumFrequency: grid.maximumFrequency
-            minimumFrequency: 0
+            spectrumMaximumFrequency:
+                root.sourceMaximumFrequency
+            minimumFrequency: grid.minimumFrequency
             maximumFrequency: grid.maximumFrequency
             minimumDb: -90
             maximumDb: 0
@@ -310,6 +509,11 @@ ColumnLayout {
                         index < bands.length;
                         ++index) {
                     const band = bands[index]
+                    if (band.highHz < grid.minimumFrequency
+                            || band.lowHz
+                                > grid.maximumFrequency) {
+                        continue
+                    }
                     const left =
                         grid.xForFrequency(band.lowHz)
                     const right =
@@ -430,25 +634,44 @@ ColumnLayout {
             enabled: spectra.sourceLoaded
                 && spectra.eqOriginalSpectrum.length > 0
                 && !spectra.eqProcessing
-            acceptedButtons: Qt.LeftButton
-            cursorShape: root.dragMode === "low"
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            hoverEnabled: true
+            cursorShape: root.dragMode === "pan"
+                ? Qt.ClosedHandCursor
+                : (root.dragMode === "low"
                 || root.dragMode === "high"
                 ? Qt.SizeHorCursor
                 : (root.dragMode === "gain"
                     ? Qt.SizeVerCursor
-                    : Qt.CrossCursor)
+                    : Qt.CrossCursor))
 
             onPressed: function(mouse) {
                 root.pressX = mouse.x
                 root.pressY = mouse.y
                 root.dragMode = ""
                 root.creatingBand = false
+                if (!grid.containsPlotPoint(
+                        mouse.x, mouse.y)) {
+                    mouse.accepted = false
+                    return
+                }
+                if (mouse.button === Qt.RightButton
+                        || (mouse.modifiers
+                            & Qt.ShiftModifier)) {
+                    root.dragMode = "pan"
+                    return
+                }
                 const bands = spectra.eqBands
                 const edgeTolerance = 9
                 for (let index = bands.length - 1;
                         index >= 0;
                         --index) {
                     const band = bands[index]
+                    if (band.highHz < grid.minimumFrequency
+                            || band.lowHz
+                                > grid.maximumFrequency) {
+                        continue
+                    }
                     const left =
                         grid.xForFrequency(band.lowHz)
                     const right =
@@ -476,6 +699,11 @@ ColumnLayout {
                         index >= 0;
                         --index) {
                     const band = bands[index]
+                    if (band.highHz < grid.minimumFrequency
+                            || band.lowHz
+                                > grid.maximumFrequency) {
+                        continue
+                    }
                     if (mouse.x >=
                             grid.xForFrequency(band.lowHz)
                             && mouse.x <=
@@ -501,6 +729,11 @@ ColumnLayout {
             onPositionChanged: function(mouse) {
                 if (!pressed)
                     return
+                if (root.dragMode === "pan") {
+                    root.panByPixels(mouse.x - root.pressX)
+                    root.pressX = mouse.x
+                    return
+                }
                 if (root.dragMode === "create") {
                     root.creationEndHz =
                         grid.frequencyForX(mouse.x)
@@ -578,6 +811,23 @@ ColumnLayout {
                 root.creatingBand = false
                 root.repaint()
             }
+
+            onWheel: function(wheel) {
+                if (!grid.containsPlotPoint(
+                        wheel.x, wheel.y)) {
+                    wheel.accepted = false
+                    return
+                }
+                const steps = wheel.angleDelta.y / 120
+                if (steps === 0) {
+                    wheel.accepted = false
+                    return
+                }
+                root.zoomAt(
+                    grid.frequencyForX(wheel.x),
+                    Math.pow(0.8, steps))
+                wheel.accepted = true
+            }
         }
 
         Text {
@@ -615,8 +865,8 @@ ColumnLayout {
 
     Text {
         Layout.fillWidth: true
-        text: "Bands overlap additively · smooth 12% transitions · "
-            + "gain is limited to ±24 dB per band"
+        text: "Wheel to zoom · Shift/right-drag to pan · "
+            + "bands overlap additively · gain is limited to ±24 dB"
         color: theme.muted
         font.family: theme.bodyFamily
         font.pixelSize: theme.fontSize(10)

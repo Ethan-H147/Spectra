@@ -7,6 +7,7 @@ Item {
 
     signal importRequested()
     signal exportFullFileRequested()
+    signal exportSpectrogramPdfRequested()
 
     readonly property bool compact: width < 900
     readonly property string modelStateLabel: !spectra.sourceLoaded
@@ -667,6 +668,13 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: theme.space1
+
+                        AppButton {
+                            text: "Export PDF"
+                            quiet: true
+                            enabled: spectra.spectrogramImageUrl.toString().length > 0
+                            onClicked: root.exportSpectrogramPdfRequested()
+                        }
 
                         Item {
                             Layout.fillWidth: true

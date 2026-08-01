@@ -329,6 +329,7 @@ public:
     Q_INVOKABLE void toggleFullFilePlayback();
     Q_INVOKABLE void seekFullFilePlayback(double position);
     Q_INVOKABLE bool exportFullFileFile(const QUrl &url);
+    Q_INVOKABLE bool exportSpectrogramPdf(const QUrl &url);
     Q_INVOKABLE void setEffectMode(int mode);
     Q_INVOKABLE void setEffectSemitones(double semitones);
     Q_INVOKABLE void setEffectFrequencyShift(double shiftHz);
