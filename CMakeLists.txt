@@ -210,13 +210,26 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         TARGETS spectra_qt
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
-    install(
-        DIRECTORY "$<TARGET_FILE_DIR:spectra_qt>/"
-        DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        FILES_MATCHING
-            PATTERN "*.dll"
-            PATTERN "Qt6*.dll" EXCLUDE
-    )
+    if(WIN32)
+        set(
+            SPECTRA_NON_QT_RUNTIME_DLLS
+            double-conversion.dll
+            dxcompiler.dll
+            dxil.dll
+            glfw3.dll
+            libpng16.dll
+            md4c.dll
+            pcre2-16.dll
+            raylib.dll
+            z.dll
+        )
+        foreach(SPECTRA_RUNTIME_DLL IN LISTS SPECTRA_NON_QT_RUNTIME_DLLS)
+            install(
+                FILES "$<TARGET_FILE_DIR:spectra_qt>/${SPECTRA_RUNTIME_DLL}"
+                DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            )
+        endforeach()
+    endif()
     qt_generate_deploy_qml_app_script(
         TARGET spectra_qt
         OUTPUT_SCRIPT SPECTRA_QT_DEPLOY_SCRIPT
@@ -227,8 +240,51 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         FILES
             "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
             "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+            "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
         DESTINATION "."
     )
+    install(
+        DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/docs/images/"
+        DESTINATION "docs/images"
+    )
+
+    set(
+        SPECTRA_RUNTIME_LICENSE_PORTS
+        cgltf
+        dirent
+        double-conversion
+        drlibs
+        glfw3
+        libpng
+        md4c
+        miniaudio
+        mmx
+        nanosvg
+        pcre2
+        qoi
+        qtbase
+        qtdeclarative
+        qtshadertools
+        qtsvg
+        raylib
+        stb
+        zlib
+    )
+    if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+        foreach(SPECTRA_LICENSE_PORT IN LISTS SPECTRA_RUNTIME_LICENSE_PORTS)
+            set(
+                SPECTRA_PORT_COPYRIGHT
+                "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${SPECTRA_LICENSE_PORT}/copyright"
+            )
+            if(EXISTS "${SPECTRA_PORT_COPYRIGHT}")
+                install(
+                    FILES "${SPECTRA_PORT_COPYRIGHT}"
+                    DESTINATION "licenses/third-party"
+                    RENAME "${SPECTRA_LICENSE_PORT}.txt"
+                )
+            endif()
+        endforeach()
+    endif()
 endif()
 
 file(

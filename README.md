@@ -1,5 +1,8 @@
 # Spectra
 
+[![Windows CI](https://github.com/Ethan-H147/Spectra/actions/workflows/windows.yml/badge.svg)](https://github.com/Ethan-H147/Spectra/actions/workflows/windows.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Spectra is a desktop application for inspecting Fourier representations of audio. The canonical interface uses Qt Quick and QML. The signal-processing core uses C99.
 
 Raylib remains a runtime dependency for audio decoding and playback. It no longer controls the canonical application layout.
@@ -11,6 +14,22 @@ Raylib remains a runtime dependency for audio decoding and playback. It no longe
 The `raylib-v1` tag preserves the retired Raylib-first application. The current source tree contains only the Qt frontend.
 
 Generated build trees, compiled binaries, editor state, and local audio files are not stored in the repository.
+
+## Download
+
+Published Windows builds are available on the [Releases page](https://github.com/Ethan-H147/Spectra/releases). Download the `windows-x64.zip` file, extract the complete `Spectra` directory, and run `Spectra\bin\spectra_qt.exe`. Keep the executable beside the bundled `Qt6`, plug-in, and DLL files.
+
+The accompanying `.sha256` file can be used to verify that the ZIP downloaded without corruption.
+
+## Screenshots
+
+### Spectrum movement
+
+![Original and predicted spectra in the Pitch and Shift comparison](docs/images/spectrum-movement.png)
+
+### Full-track audio analysis
+
+![Audio Analysis workspace with waveform, spectrum, and detected peaks](docs/images/audio-analysis.png)
 
 ## Functions
 
@@ -57,7 +76,7 @@ The three Section 6 modes deliberately expose different frequency mappings:
 - **Pitch shift** phase-vocoder stretches overlapping FFT frames, then resamples the result back to the source duration. Frequencies are multiplied by \(2^{n/12}\).
 - **Frequency shift** creates an analytic signal in each overlapping FFT frame and applies complex modulation. The same hertz offset is added to every frequency.
 
-The Spectrum movement graph overlays a cached full-track mono spectrum with the transformed shape. Parameter changes remap that cache immediately; after processing, the graph replaces the prediction with one full-track averaged spectrum from the rendered audio and marks the tracked peak movement.
+The Spectrum movement graph overlays a cached full-track mono spectrum with the transformed shape. Parameter changes remap that cache immediately. After processing, the graph uses a full-track averaged spectrum from the rendered audio and marks the tracked peak movement.
 
 All three modes retain the imported playback channel layout, run on a background worker, support original/processed comparison, and export WAV audio. Repeated transforms reuse precomputed FFT ordering and twiddles. Pitch shifting shares overlap normalization between channels, while frequency shifting also reuses window weights and frame-local modulation values.
 
@@ -76,7 +95,7 @@ Full-file spectrogram generation, FFT analysis, inverse FFT reconstruction, and 
 
 ## Processing performance
 
-Full-track spectrum analysis, tape resampling, Range EQ, frequency shifting, and independent pitch-shift channels use an auto-scaling CPU worker pool. Repeated FFT work reuses precomputed bit-reversal and twiddle tables. Overlap-add effects divide frames into non-overlapping groups before parallel execution, so their output is equivalent to the serial algorithm without concurrent writes to the same samples.
+Full-track spectrum analysis, tape resampling, Range EQ, frequency shifting, and independent pitch-shift channels use an auto-scaling CPU worker pool. Repeated FFT work reuses precomputed bit-reversal and twiddle tables. Overlap-add effects divide frames into non-overlapping groups before parallel execution. This produces the same output as the serial algorithm without concurrent writes to the same samples.
 
 The Settings workspace provides four persistent modes:
 
@@ -133,12 +152,22 @@ cmake --build build --config Release --target spectra_qt
 Install the executable and runtime files into a separate directory:
 
 ```powershell
+$packagePath = Join-Path (Get-Location) "build\package"
 cmake --install build `
   --config Release `
-  --prefix build\package
+  --prefix $packagePath
 ```
 
 The packaged executable is `build\package\bin\spectra_qt.exe`.
+
+Every push and pull request runs the Windows build and test workflow. A tag beginning with `v` also creates a GitHub release containing the portable ZIP and its SHA-256 checksum:
+
+```powershell
+git tag v0.1.0-alpha
+git push origin v0.1.0-alpha
+```
+
+Do not reuse a published version tag. Create a new tag when the application or package changes.
 
 ## Tests
 
@@ -171,7 +200,7 @@ build\Release\dsp_benchmark.exe
 build\Release\dsp_benchmark.exe --single
 ```
 
-## Constraints
+## Known limitations
 
 - Imported-file decoding and selected-region analysis run on the UI thread.
 - Full-file reconstruction accepts at most 600 seconds of audio.
@@ -188,4 +217,4 @@ build\Release\dsp_benchmark.exe --single
 
 ## License
 
-Spectra uses the license in [`LICENSE`](LICENSE).
+Spectra uses the license in [`LICENSE`](LICENSE). Packaged dependency licenses and source links are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
