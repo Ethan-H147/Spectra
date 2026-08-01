@@ -203,8 +203,8 @@ ScrollView {
         Panel {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            title: "Whole-file FFT"
-            subtitle: "Memory ceiling for reusable global models"
+            title: "Whole-file models"
+            subtitle: "Memory ceiling for whole-file models"
 
             ColumnLayout {
                 Layout.fillWidth: true
@@ -223,7 +223,7 @@ ScrollView {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Larger limits allow longer stereo FFT models. The estimate is shown before building."
+                    text: "Larger limits allow longer FFT and STFT reconstructions. The active model estimate is shown before building."
                     color: theme.muted
                     font.family: theme.bodyFamily
                     font.pixelSize: theme.fontSize(12)

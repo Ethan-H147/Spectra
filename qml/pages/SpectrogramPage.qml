@@ -26,6 +26,15 @@ Item {
         spectra.fullFileMode === 1
             ? 2
             : (spectra.fullFileChannelMode === 1 ? 1 : 0)
+    readonly property real currentEstimatedBytes:
+        !spectra.sourceLoaded
+            ? 0
+            : (fixedGlobal && spectra.fullFileChannelMode === 0
+                ? spectra.fullFileEstimatedMonoBytes
+                : spectra.fullFileEstimatedSourceBytes)
+    readonly property bool buildFitsMemory:
+        currentEstimatedBytes > 0
+            && currentEstimatedBytes <= spectra.fullFileMemoryLimitBytes
     readonly property var reconstructionPresets:
         energySelection
             ? ["10%", "30%", "50%", "75%", "90%", "99%"]
@@ -324,6 +333,8 @@ Item {
                             enabled: spectra.sourceLoaded
                                 && spectra.fullFileMaximumComponents > 0
                                 && !spectra.fullFileProcessing
+                                && (spectra.fullFileReady
+                                    || root.buildFitsMemory)
                             onClicked: {
                                 if (spectra.fullFileReady)
                                     spectra.playFullFileReconstruction()
@@ -568,27 +579,19 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
-                        visible: root.fixedGlobal && spectra.sourceLoaded
-                        text: (spectra.fullFileChannelMode === 1
-                                ? "Stereo estimate "
-                                    + root.formatMemory(
-                                        spectra.fullFileEstimatedSourceBytes)
-                                : "Mono estimate "
-                                    + root.formatMemory(
-                                        spectra.fullFileEstimatedMonoBytes))
+                        visible: spectra.sourceLoaded
+                        text: (root.fixedGlobal
+                                ? (spectra.fullFileChannelMode === 1
+                                    ? "Stereo FFT estimate "
+                                    : "Mono FFT estimate ")
+                                : "STFT estimate ")
+                            + root.formatMemory(root.currentEstimatedBytes)
                             + "  |  Limit "
                             + root.formatMemory(
                                 spectra.fullFileMemoryLimitBytes)
-                        color: {
-                            const estimate =
-                                spectra.fullFileChannelMode === 1
-                                    ? spectra.fullFileEstimatedSourceBytes
-                                    : spectra.fullFileEstimatedMonoBytes
-                            return estimate
-                                    > spectra.fullFileMemoryLimitBytes
-                                ? theme.warning
-                                : theme.muted
-                        }
+                        color: root.buildFitsMemory
+                            ? theme.muted
+                            : theme.warning
                         font.family: theme.bodyFamily
                         font.pixelSize: theme.fontSize(10)
                         wrapMode: Text.Wrap
@@ -1079,6 +1082,7 @@ Item {
                     : "Build model")
             enabled: spectra.fullFileMaximumComponents > 0
                 && !spectra.fullFileProcessing
+                && root.buildFitsMemory
             onClicked: spectra.buildFullFileModel()
         }
     }

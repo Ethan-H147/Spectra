@@ -223,8 +223,8 @@ ApplicationWindow {
                                 },
                                 {
                                     "title": "Settings",
-                                    "summary": "Inspect runtime values and configure display and FFT memory.",
-                                    "steps": "Set text scale or the whole-file FFT memory ceiling.",
+                                    "summary": "Inspect runtime values and configure display and model memory.",
+                                    "steps": "Set text scale or the whole-file model memory ceiling.",
                                     "details": "The remaining rows report current source, analysis, and shortcut values."
                                 }
                             ]
@@ -455,13 +455,13 @@ ApplicationWindow {
 
                 Repeater {
                     model: [
-                        ["⌂", "Overview"],
-                        ["☷", "Synthesizer"],
-                        ["⌁", "Audio Analysis"],
-                        ["▥", "Harmonic Lab"],
-                        ["▦", "Spectrogram"],
-                        ["⇄", "Pitch & Shift"],
-                        ["≋", "Range EQ"]
+                        ["overview", "Overview"],
+                        ["synth", "Synthesizer"],
+                        ["analysis", "Audio Analysis"],
+                        ["harmonics", "Harmonic Lab"],
+                        ["spectrogram", "Spectrogram"],
+                        ["pitch", "Pitch & Shift"],
+                        ["range-eq", "Range EQ"]
                     ]
 
                     Rectangle {
@@ -492,11 +492,11 @@ ApplicationWindow {
                             anchors.rightMargin: 12
                             spacing: 12
 
-                            Text {
-                                text: modelData[0]
+                            SpectraIcon {
+                                Layout.preferredWidth: 18
+                                Layout.preferredHeight: 18
+                                name: modelData[0]
                                 color: spectra.currentPage === index ? theme.text : theme.muted
-                                font.family: theme.bodyFamily
-                                font.pixelSize: theme.fontSize(13)
                             }
 
                             Text {
@@ -556,11 +556,11 @@ ApplicationWindow {
                         anchors.rightMargin: 12
                         spacing: 12
 
-                        Text {
-                            text: "⚙"
+                        SpectraIcon {
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
+                            name: "settings"
                             color: spectra.currentPage === 7 ? theme.text : theme.muted
-                            font.family: theme.bodyFamily
-                            font.pixelSize: theme.fontSize(13)
                         }
 
                         Text {
@@ -624,14 +624,24 @@ ApplicationWindow {
                         spacing: theme.space1
 
                         AppButton {
-                            text: "Help  F1"
+                            iconName: "help"
+                            iconOnly: true
+                            accessibleName: "Help"
+                            toolTip: "Help (F1)"
                             quiet: true
                             compact: true
                             onClicked: helpPopup.open()
                         }
 
                         AppButton {
-                            text: window.visibility === Window.FullScreen ? "Exit full screen  F11" : "Full screen  F11"
+                            iconName: window.visibility === Window.FullScreen
+                                ? "fullscreen-exit"
+                                : "fullscreen"
+                            iconOnly: true
+                            accessibleName: window.visibility === Window.FullScreen
+                                ? "Exit full screen"
+                                : "Enter full screen"
+                            toolTip: accessibleName + " (F11)"
                             compact: true
                             onClicked: window.visibility = window.visibility === Window.FullScreen
                                 ? Window.Windowed

@@ -1180,6 +1180,88 @@ static int run_effect_benchmark(void) {
     return 0;
 }
 
+static int test_stft_memory_policy(void) {
+    const size_t sample_count = 4096U;
+    const unsigned int window_size = 512U;
+    const int component_count = 128;
+    const size_t mono_bytes =
+        stft_reconstruction_estimated_bytes(
+            sample_count,
+            window_size,
+            component_count,
+            false,
+            0U,
+            0U,
+            1U);
+    const size_t stereo_bytes =
+        stft_reconstruction_estimated_bytes(
+            sample_count,
+            window_size,
+            component_count,
+            false,
+            0U,
+            0U,
+            2U);
+    const size_t expected_mono_bytes =
+        (size_t)window_size * 3U * sizeof(float) +
+        sample_count * 2U * sizeof(float) +
+        ((size_t)window_size / 2U + 1U) *
+            sizeof(unsigned char) +
+        ((size_t)window_size / 2U - 1U) *
+            sizeof(StftBinRank);
+
+    ASSERT_TRUE(
+        mono_bytes == expected_mono_bytes &&
+            stereo_bytes == mono_bytes * 2U,
+        "STFT memory estimates should account for work buffers and channels");
+    ASSERT_TRUE(
+        stft_reconstruction_fits_memory(
+            sample_count,
+            window_size,
+            component_count,
+            false,
+            0U,
+            0U,
+            2U,
+            stereo_bytes),
+        "STFT reconstruction should fit at its estimated memory ceiling");
+    ASSERT_TRUE(
+        !stft_reconstruction_fits_memory(
+            sample_count,
+            window_size,
+            component_count,
+            false,
+            0U,
+            0U,
+            2U,
+            stereo_bytes - 1U),
+        "STFT reconstruction should be rejected above its memory ceiling");
+
+    const size_t short_spectrogram_bytes =
+        stft_reconstruction_estimated_bytes(
+            sample_count,
+            window_size,
+            0,
+            true,
+            16U,
+            32U,
+            1U);
+    const size_t long_spectrogram_bytes =
+        stft_reconstruction_estimated_bytes(
+            sample_count * 100U,
+            window_size,
+            0,
+            true,
+            16U,
+            32U,
+            1U);
+    ASSERT_TRUE(
+        short_spectrogram_bytes > 0U &&
+            short_spectrogram_bytes == long_spectrogram_bytes,
+        "spectrogram-only working memory should not grow with source duration");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--benchmark-effects") == 0) {
         return run_effect_benchmark();
@@ -1211,6 +1293,7 @@ int main(int argc, char **argv) {
     if (test_stft_progressive_quality() != 0) return 1;
     if (test_strided_stereo_reconstruction() != 0) return 1;
     if (test_global_fourier_memory_policy() != 0) return 1;
+    if (test_stft_memory_policy() != 0) return 1;
 
     puts("All DSP tests passed.");
     return 0;

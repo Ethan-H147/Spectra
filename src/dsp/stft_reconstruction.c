@@ -13,6 +13,102 @@ static bool is_power_of_two(unsigned int value) {
     return value >= 8U && (value & (value - 1U)) == 0U;
 }
 
+static bool add_allocation_bytes(
+    size_t count,
+    size_t element_size,
+    size_t *total) {
+    if (total == NULL ||
+        (element_size > 0U && count > SIZE_MAX / element_size)) {
+        return false;
+    }
+    const size_t bytes = count * element_size;
+    if (*total > SIZE_MAX - bytes) {
+        return false;
+    }
+    *total += bytes;
+    return true;
+}
+
+size_t stft_reconstruction_estimated_bytes(
+    size_t source_count,
+    unsigned int window_size,
+    int top_component_count,
+    bool include_spectrogram,
+    unsigned int spectrogram_time_bins,
+    unsigned int spectrogram_frequency_bins,
+    unsigned int channel_count) {
+    if (source_count == 0U ||
+        !is_power_of_two(window_size) ||
+        top_component_count < 0 ||
+        channel_count == 0U ||
+        (include_spectrogram &&
+         (spectrogram_time_bins == 0U ||
+          spectrogram_frequency_bins == 0U))) {
+        return 0U;
+    }
+
+    const size_t positive_bin_count =
+        (size_t)window_size / 2U - 1U;
+    size_t per_channel = 0U;
+    if (!add_allocation_bytes(
+            window_size, sizeof(float), &per_channel) ||
+        !add_allocation_bytes(
+            window_size, sizeof(float), &per_channel) ||
+        !add_allocation_bytes(
+            window_size, sizeof(float), &per_channel)) {
+        return 0U;
+    }
+    if (top_component_count > 0 &&
+        (!add_allocation_bytes(
+             source_count, sizeof(float), &per_channel) ||
+         !add_allocation_bytes(
+             source_count, sizeof(float), &per_channel) ||
+         !add_allocation_bytes(
+             (size_t)window_size / 2U + 1U,
+             sizeof(unsigned char),
+             &per_channel) ||
+         !add_allocation_bytes(
+             positive_bin_count,
+             sizeof(StftBinRank),
+             &per_channel))) {
+        return 0U;
+    }
+    if (include_spectrogram &&
+        !add_allocation_bytes(
+            (size_t)spectrogram_time_bins *
+                (size_t)spectrogram_frequency_bins,
+            sizeof(float),
+            &per_channel)) {
+        return 0U;
+    }
+    if (per_channel > SIZE_MAX / (size_t)channel_count) {
+        return 0U;
+    }
+    return per_channel * (size_t)channel_count;
+}
+
+bool stft_reconstruction_fits_memory(
+    size_t source_count,
+    unsigned int window_size,
+    int top_component_count,
+    bool include_spectrogram,
+    unsigned int spectrogram_time_bins,
+    unsigned int spectrogram_frequency_bins,
+    unsigned int channel_count,
+    size_t byte_limit) {
+    const size_t estimated_bytes =
+        stft_reconstruction_estimated_bytes(
+            source_count,
+            window_size,
+            top_component_count,
+            include_spectrogram,
+            spectrogram_time_bins,
+            spectrogram_frequency_bins,
+            channel_count);
+    return estimated_bytes > 0U &&
+        (byte_limit == 0U || estimated_bytes <= byte_limit);
+}
+
 static int compare_ranked_bins(const void *left_value, const void *right_value) {
     const StftBinRank *left = (const StftBinRank *)left_value;
     const StftBinRank *right = (const StftBinRank *)right_value;

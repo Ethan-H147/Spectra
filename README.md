@@ -42,7 +42,7 @@ Spectra provides eight workspaces:
 5. **Spectrogram** displays STFT magnitude and builds complete-file reconstructions.
 6. **Pitch & Shift** builds tape-speed, duration-preserving pitch, and fixed-Hz frequency effects with an overlaid before/after spectrum.
 7. **Range EQ** lets you draw smooth frequency bands directly on the full-track spectrum, stack overlapping gains, and compare predicted with measured output.
-8. **Settings** controls text scale, the fixed-model memory limit, and processing performance.
+8. **Settings** controls text scale, the whole-file model memory limit, and processing performance.
 
 Imported audio supports WAV, MP3, OGG, and FLAC. Mono and stereo sources retain their playback channel layout. Sources with more than two channels produce mono playback and analysis buffers.
 
@@ -203,8 +203,8 @@ build\Release\dsp_benchmark.exe --single
 ## Known limitations
 
 - Imported-file decoding and selected-region analysis run on the UI thread.
-- Full-file reconstruction accepts at most 600 seconds of audio.
-- Fixed FFT memory grows with the zero-padded transform size and retained-bin capacity.
+- Whole-file FFT and STFT builds are admitted by the configurable memory ceiling instead of a fixed duration limit; the active model estimate is shown before building.
+- Fixed FFT memory grows with the zero-padded transform size and retained-bin capacity, while STFT reconstruction memory grows linearly with duration and channel count.
 - Spectral-energy selection ranks the complete one-sided FFT.
 - The processing-performance mode persists after exit; other settings and reconstruction caches do not.
 - Pitch estimation requires stable periodic content.

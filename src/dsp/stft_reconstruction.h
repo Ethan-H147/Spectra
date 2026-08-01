@@ -49,6 +49,23 @@ typedef struct {
 void spectrogram_data_free(SpectrogramData *spectrogram);
 void stft_reconstruction_job_init(StftReconstructionJob *job);
 void stft_reconstruction_job_free(StftReconstructionJob *job);
+size_t stft_reconstruction_estimated_bytes(
+    size_t source_count,
+    unsigned int window_size,
+    int top_component_count,
+    bool include_spectrogram,
+    unsigned int spectrogram_time_bins,
+    unsigned int spectrogram_frequency_bins,
+    unsigned int channel_count);
+bool stft_reconstruction_fits_memory(
+    size_t source_count,
+    unsigned int window_size,
+    int top_component_count,
+    bool include_spectrogram,
+    unsigned int spectrogram_time_bins,
+    unsigned int spectrogram_frequency_bins,
+    unsigned int channel_count,
+    size_t byte_limit);
 bool stft_reconstruction_job_begin(StftReconstructionJob *job,
                                    const SampleBuffer *source,
                                    unsigned int window_size,

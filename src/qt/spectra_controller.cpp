@@ -42,7 +42,6 @@ constexpr int kEqPresetCount = 12;
 constexpr unsigned int kSpectrogramTimeBins = 256U;
 constexpr unsigned int kSpectrogramFrequencyBins = 128U;
 constexpr float kSpectrogramMaximumFrequency = 12000.0f;
-constexpr double kFullFileMaximumDuration = 600.0;
 constexpr size_t kGlobalOperationsPerBatch = 65536U;
 constexpr size_t kStftFramesPerBatch = 2U;
 constexpr size_t kSpectrogramFramesPerBatch = 32U;
@@ -1201,6 +1200,17 @@ qulonglong SpectraController::fullFileEstimatedMonoBytes() const {
     if (!sourceLoaded()) {
         return 0;
     }
+    if (fullFileMode_ == 1) {
+        return static_cast<qulonglong>(
+            stft_reconstruction_estimated_bytes(
+                importedAudio_.mono.count,
+                kFullFileWindowSize,
+                fullFileSelectedComponents_,
+                false,
+                0U,
+                0U,
+                1U));
+    }
     const int componentCapacity =
         requiredGlobalAnalysisComponents();
     return componentCapacity > 0
@@ -1223,6 +1233,17 @@ qulonglong SpectraController::fullFileEstimatedSourceBytes() const {
                 importedAudio_.interleaved.channel_count == 2U
             ? 2U
             : 1U;
+    if (fullFileMode_ == 1) {
+        return static_cast<qulonglong>(
+            stft_reconstruction_estimated_bytes(
+                importedAudio_.mono.count,
+                kFullFileWindowSize,
+                fullFileSelectedComponents_,
+                false,
+                0U,
+                0U,
+                channels));
+    }
     return componentCapacity > 0
         ? static_cast<qulonglong>(
               global_fourier_estimated_multichannel_analysis_bytes(
@@ -2160,7 +2181,7 @@ void SpectraController::setFullFileMemoryLimitBytes(
     }
     fullFileMemoryLimitBytes_ = bounded;
     setStatusText(
-        QStringLiteral("Whole-file FFT memory limit set to %1 MB")
+        QStringLiteral("Whole-file model memory limit set to %1 MB")
             .arg(static_cast<double>(bounded) /
                 (1024.0 * 1024.0), 0, 'f', 0));
     emit fullFileChanged();
@@ -2194,10 +2215,6 @@ void SpectraController::setFullFileComponentCount(int componentCount) {
 void SpectraController::buildFullFileModel() {
     if (!sourceLoaded()) {
         setStatusText(QStringLiteral("Import audio before building a whole-file model"));
-        return;
-    }
-    if (sourceDuration() > kFullFileMaximumDuration) {
-        setStatusText(QStringLiteral("Whole-file reconstruction is limited to 600 seconds"));
         return;
     }
     if (fullFileProcessing()) {
@@ -3788,8 +3805,17 @@ void SpectraController::startSpectrogramBuild() {
     if (!sourceLoaded()) {
         return;
     }
-    if (sourceDuration() > kFullFileMaximumDuration) {
-        setStatusText(QStringLiteral("Spectrogram analysis is limited to 600 seconds"));
+    if (!stft_reconstruction_fits_memory(
+            importedAudio_.mono.count,
+            kFullFileWindowSize,
+            0,
+            true,
+            kSpectrogramTimeBins,
+            kSpectrogramFrequencyBins,
+            1U,
+            static_cast<size_t>(fullFileMemoryLimitBytes_))) {
+        setStatusText(QStringLiteral(
+            "Spectrogram working memory exceeds the configured limit"));
         return;
     }
 
@@ -4066,6 +4092,43 @@ bool SpectraController::startGlobalReconstruction() {
 bool SpectraController::startStftReconstruction() {
     const unsigned int channelCount =
         fullFileReconstructionChannels();
+    const size_t estimatedBytes =
+        stft_reconstruction_estimated_bytes(
+            importedAudio_.mono.count,
+            kFullFileWindowSize,
+            fullFileSelectedComponents_,
+            false,
+            0U,
+            0U,
+            channelCount);
+    if (!stft_reconstruction_fits_memory(
+            importedAudio_.mono.count,
+            kFullFileWindowSize,
+            fullFileSelectedComponents_,
+            false,
+            0U,
+            0U,
+            channelCount,
+            static_cast<size_t>(fullFileMemoryLimitBytes_))) {
+        if (estimatedBytes == 0U) {
+            setStatusText(QStringLiteral(
+                "Could not estimate STFT reconstruction memory"));
+        } else {
+            const double estimatedMegabytes =
+                static_cast<double>(estimatedBytes) /
+                (1024.0 * 1024.0);
+            const double limitMegabytes =
+                static_cast<double>(fullFileMemoryLimitBytes_) /
+                (1024.0 * 1024.0);
+            setStatusText(
+                QStringLiteral(
+                    "%1-channel STFT needs %2 MB, above the %3 MB limit")
+                    .arg(channelCount)
+                    .arg(estimatedMegabytes, 0, 'f', 0)
+                    .arg(limitMegabytes, 0, 'f', 0));
+        }
+        return false;
+    }
     background_task_cancel_and_join(&fullFileTask_);
     stft_reconstruction_job_free(&fullFileStftJob_);
     stft_reconstruction_job_init(&fullFileStftJob_);

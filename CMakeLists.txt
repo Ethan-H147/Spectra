@@ -145,6 +145,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         qml/components/MetricCard.qml
         qml/components/Panel.qml
         qml/components/SegmentedSwitch.qml
+        qml/components/SpectraIcon.qml
         qml/components/SpectrumMovementView.qml
         qml/components/RangeEqSpectrumView.qml
         qml/components/StatusRow.qml
