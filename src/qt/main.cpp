@@ -15,6 +15,7 @@ extern "C" {
 int main(int argc, char *argv[]) {
     windows_app_prepare_process();
     QGuiApplication::setApplicationName(QStringLiteral("Spectra"));
+    QGuiApplication::setApplicationVersion(QStringLiteral(SPECTRA_VERSION));
     QGuiApplication::setOrganizationName(QStringLiteral("Fourier Audio Lab"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 

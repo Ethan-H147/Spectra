@@ -1,6 +1,8 @@
 # Generated build trees
 /build/
 /build-*/
+/dist/
+/artifacts/
 /vcpkg_installed/
 
 # Compiled output

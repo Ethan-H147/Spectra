@@ -17,9 +17,11 @@ Generated build trees, compiled binaries, editor state, and local audio files ar
 
 ## Download
 
-Published Windows builds are available on the [Releases page](https://github.com/Ethan-H147/Spectra/releases). Download the `windows-x64.zip` file, extract the complete `Spectra` directory, and run `Spectra\bin\spectra_qt.exe`. Keep the executable beside the bundled `Qt6`, plug-in, and DLL files.
+Published Windows builds are available on the [Releases page](https://github.com/Ethan-H147/Spectra/releases). Most users should download `Spectra-1.0.0-windows-x64-setup.exe`. The installer adds a Start Menu shortcut and an uninstaller without requiring administrator access.
 
-The accompanying `.sha256` file can be used to verify that the ZIP downloaded without corruption.
+The portable `Spectra-1.0.0-windows-x64.zip` package requires no installation. Extract the complete `Spectra` directory and run `Spectra\bin\spectra_qt.exe`. Keep the executable beside the bundled `Qt6`, plug-in, and DLL files.
+
+Each package includes a `.sha256` file for integrity verification. The first release is not code-signed, so Windows can display an unknown-publisher warning for the installer.
 
 ## Screenshots
 
@@ -160,18 +162,29 @@ cmake --install build `
 
 The packaged executable is `build\package\bin\spectra_qt.exe`.
 
-Every push and pull request runs the Windows build and test workflow. A tag beginning with `v` also creates a GitHub release containing the portable ZIP and its SHA-256 checksum:
+Install Inno Setup 6, then create the portable ZIP, installer, and SHA-256 files:
 
 ```powershell
-git tag v0.1.0-alpha
-git push origin v0.1.0-alpha
+.\packaging\package-windows.ps1 `
+  -SourceDirectory build\package `
+  -ArtifactsDirectory artifacts `
+  -Version 1.0.0 `
+  -Label 1.0.0 `
+  -InnoCompiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 ```
 
-Do not reuse a published version tag. Create a new tag when the application or package changes.
+Every push and pull request runs the Windows build, tests, and both packaging paths. A version tag publishes the installer, portable ZIP, and both SHA-256 files:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The tag must match the version in `CMakeLists.txt`. Do not reuse a published version tag.
 
 ## Tests
 
-The default configuration registers four test executables:
+The default configuration registers five test executables:
 
 | Test | Coverage |
 | --- | --- |
@@ -179,6 +192,7 @@ The default configuration registers four test executables:
 | `audio_import_tests` | Unicode paths, decoding, channel preservation, and WAV export |
 | `runtime_tests` | Worker completion, cancellation, parallel scheduling, atomic cancellation, cache ownership, eviction, and channel-aware keys |
 | `spectrum_lod_tests` | Spectrum cache levels, view selection, and memory accounting |
+| `spectrogram_pdf_tests` | Landscape PDF generation, file signature, and minimum output size |
 
 Build and run the test suite:
 

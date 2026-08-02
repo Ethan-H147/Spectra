@@ -49,30 +49,64 @@ jobs:
           cmake --install build --config Release
           --prefix "$env:GITHUB_WORKSPACE/dist/Spectra"
 
-      - name: Create ZIP and checksum
-        id: package
+      - name: Resolve package version
+        id: version
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force artifacts | Out-Null
-          if ($env:GITHUB_REF_TYPE -eq "tag") {
-            $label = $env:GITHUB_REF_NAME
-          } else {
-            $label = $env:GITHUB_SHA.Substring(0, 8)
+          $cmake = Get-Content CMakeLists.txt -Raw
+          if ($cmake -notmatch 'project\(SpectraDesktop VERSION ([0-9]+\.[0-9]+\.[0-9]+)') {
+            throw "Could not read the project version from CMakeLists.txt"
           }
-          $archiveName = "Spectra-$label-windows-x64.zip"
-          $archivePath = Join-Path artifacts $archiveName
-          Compress-Archive -Path dist/Spectra -DestinationPath $archivePath
-          $hash = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
-          "$hash  $archiveName" | Set-Content -Encoding ascii "$archivePath.sha256"
-          "archive_name=$archiveName" >> $env:GITHUB_OUTPUT
+          $version = $Matches[1]
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            if ($env:GITHUB_REF_NAME -ne "v$version") {
+              throw "Tag $env:GITHUB_REF_NAME does not match project version v$version"
+            }
+            $label = $version
+          } else {
+            $label = "$version-$($env:GITHUB_SHA.Substring(0, 8))"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "label=$label" >> $env:GITHUB_OUTPUT
 
-      - name: Upload portable package
+      - name: Locate Inno Setup
+        id: inno
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $compiler = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $compiler) {
+            choco install innosetup --version=6.7.1 --no-progress --yes
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not install Inno Setup"
+            }
+            $compiler = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          }
+          if (-not $compiler) {
+            throw "Could not locate the Inno Setup compiler"
+          }
+          "compiler=$compiler" >> $env:GITHUB_OUTPUT
+
+      - name: Create release packages and checksums
+        shell: pwsh
+        run: >-
+          ./packaging/package-windows.ps1
+          -SourceDirectory dist/Spectra
+          -ArtifactsDirectory artifacts
+          -Version "${{ steps.version.outputs.version }}"
+          -Label "${{ steps.version.outputs.label }}"
+          -InnoCompiler "${{ steps.inno.outputs.compiler }}"
+
+      - name: Upload Windows packages
         uses: actions/upload-artifact@v4
         with:
           name: spectra-windows-x64
-          path: |
-            artifacts/${{ steps.package.outputs.archive_name }}
-            artifacts/${{ steps.package.outputs.archive_name }}.sha256
+          path: artifacts/*
           if-no-files-found: error
 
   publish-release:
@@ -84,7 +118,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Download portable package
+      - name: Download Windows packages
         uses: actions/download-artifact@v4
         with:
           name: spectra-windows-x64

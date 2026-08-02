@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(SpectraDesktop LANGUAGES C CXX)
+project(SpectraDesktop VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -124,6 +124,10 @@ if(SPECTRA_BUILD_QT_FRONTEND)
             Qt6::QuickControls2
             raylib
             Threads::Threads
+    )
+    target_compile_definitions(
+        spectra_qt
+        PRIVATE SPECTRA_VERSION="${PROJECT_VERSION}"
     )
     spectra_enable_warnings(spectra_qt)
     spectra_link_platform(spectra_qt)
