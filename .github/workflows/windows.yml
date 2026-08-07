@@ -33,14 +33,15 @@ jobs:
       - name: Restore vcpkg dependencies
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11.6
         with:
-          vcpkgGitCommitId: 56bb2411609227288b70117ead2c47585ba07713
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: 86dc619bd8d9697405ae5c944b474117ea9457ce
           doNotCache: true
 
       - name: Restore compiled dependency cache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
-          key: vcpkg-${{ runner.os }}-release-56bb241-${{ hashFiles('vcpkg.json', 'triplets/x64-windows-release.cmake') }}
+          key: vcpkg-${{ runner.os }}-release-86dc619-${{ hashFiles('vcpkg.json', 'triplets/x64-windows-release.cmake') }}
 
       - name: Prepare compiled dependency cache
         shell: pwsh
