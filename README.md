@@ -80,7 +80,7 @@ The STFT path uses a 2,048-sample Hann window and a 512-sample hop. Normalized o
 
 ## Pitch and frequency effects
 
-The three Section 6 modes deliberately expose different frequency mappings:
+The three pitch and frequency effect modes use different frequency mappings:
 
 - **Tape speed** resamples the source by \(2^{n/12}\). Pitch and tempo move together, so an octave up is half as long.
 - **Pitch shift** phase-vocoder stretches overlapping FFT frames, then resamples the result back to the source duration. Frequencies are multiplied by \(2^{n/12}\).

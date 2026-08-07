@@ -114,7 +114,7 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.preferredWidth: 620
-            title: "Section 6 · Pitch & Shift"
+            title: "Pitch & Shift"
             subtitle: "Three ways to move sound through frequency"
 
             ColumnLayout {

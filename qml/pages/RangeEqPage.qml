@@ -286,7 +286,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Section 7 · Range EQ"
+                    text: "Range EQ"
                     color: theme.text
                     font.family: theme.headingFamily
                     font.pixelSize: theme.fontSize(18)
