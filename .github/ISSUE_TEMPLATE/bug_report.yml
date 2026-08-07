@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a reproducible Spectra problem
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach private audio. Use a short synthetic or public-domain sample when reproduction requires an input file.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: State what happened and what you expected.
+      placeholder: Spectra did ... I expected ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open ...
+        2. Import ...
+        3. Select ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Spectra diagnostics
+      description: In Settings, select Copy diagnostics and paste the result here.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Input details
+      description: Include the format, duration, sample rate, channel count, and whether another file reproduces the problem.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add screenshots, logs, or a link to a non-private reproduction file.

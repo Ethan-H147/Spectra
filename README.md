@@ -23,6 +23,14 @@ The portable `Spectra-1.0.0-windows-x64.zip` package requires no installation. E
 
 Each package includes a `.sha256` file for integrity verification. The first release is not code-signed, so Windows can display an unknown-publisher warning for the installer.
 
+## Security, privacy, and code signing
+
+Spectra processes audio locally and makes no network requests. The application does not collect telemetry or transmit imported audio, filenames, analysis results, or diagnostics. Read the [privacy policy](PRIVACY.md) for stored settings and export behavior.
+
+Report vulnerabilities through [GitHub private vulnerability reporting](https://github.com/Ethan-H147/Spectra/security/advisories/new). Do not disclose an unpatched vulnerability in a public issue. The [security policy](SECURITY.md) lists the information required for a report.
+
+The [code signing policy](CODE_SIGNING_POLICY.md) defines release approval, signature verification, and key controls. Spectra is applying for the SignPath Foundation open-source program. Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
 ## Screenshots
 
 ### Spectrum movement
@@ -44,7 +52,7 @@ Spectra provides eight workspaces:
 5. **Spectrogram** displays STFT magnitude, exports the visualization as a landscape PDF, and builds complete-file reconstructions.
 6. **Pitch & Shift** builds tape-speed, duration-preserving pitch, and fixed-Hz frequency effects with an overlaid before/after spectrum.
 7. **Range EQ** lets you zoom, pan, and fit the horizontal frequency axis or return to the full 0 Hz-to-Nyquist range. Draw smooth bands on the full-track spectrum, stack overlapping gains, and compare predicted with measured output.
-8. **Settings** controls text scale, the whole-file model memory limit, and processing performance.
+8. **Settings** controls text scale, the whole-file model memory limit, processing performance, and local diagnostics.
 
 Imported audio supports WAV, MP3, OGG, and FLAC. Mono and stereo sources retain their playback channel layout. Sources with more than two channels produce mono playback and analysis buffers.
 
@@ -168,16 +176,16 @@ Install Inno Setup 6, then create the portable ZIP, installer, and SHA-256 files
 .\packaging\package-windows.ps1 `
   -SourceDirectory build\package `
   -ArtifactsDirectory artifacts `
-  -Version 1.0.0 `
-  -Label 1.0.0 `
+  -Version 1.0.1 `
+  -Label 1.0.1 `
   -InnoCompiler "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 ```
 
-Every push and pull request runs the Windows build, tests, and both packaging paths. A version tag publishes the installer, portable ZIP, and both SHA-256 files:
+Every push and pull request runs the Windows build and tests. Main-branch pushes also build the installer, portable ZIP, and both SHA-256 files. The workflow uses Release-only vcpkg dependencies and a persistent binary cache. A matching version tag publishes the four package files:
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+git tag -a v1.0.1 -m "Spectra v1.0.1"
+git push origin v1.0.1
 ```
 
 The tag must match the version in `CMakeLists.txt`. Do not reuse a published version tag.

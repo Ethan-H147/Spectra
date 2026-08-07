@@ -2,11 +2,16 @@
 #include "qt/spectrogram_pdf_export.h"
 
 #include <QBuffer>
+#include <QClipboard>
 #include <QColor>
+#include <QCoreApplication>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QImage>
 #include <QPointF>
 #include <QSettings>
+#include <QStringList>
+#include <QSysInfo>
 #include <QVariantMap>
 #include <QtMath>
 
@@ -918,6 +923,63 @@ int SpectraController::hardwareThreadCount() const {
 
 QString SpectraController::processingBackendName() const {
     return QStringLiteral("Optimized multicore CPU");
+}
+
+QString SpectraController::applicationVersion() const {
+    return QCoreApplication::applicationVersion();
+}
+
+QString SpectraController::buildCommit() const {
+    return QStringLiteral(SPECTRA_BUILD_COMMIT);
+}
+
+QString SpectraController::systemDescription() const {
+    return QStringLiteral("%1 · %2")
+        .arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture());
+}
+
+QString SpectraController::diagnosticsText() const {
+    const double memoryMegabytes =
+        static_cast<double>(fullFileMemoryLimitBytes_) /
+        (1024.0 * 1024.0);
+    QStringList lines = {
+        QStringLiteral("Spectra version: %1").arg(applicationVersion()),
+        QStringLiteral("Build commit: %1").arg(buildCommit()),
+        QStringLiteral("Operating system: %1")
+            .arg(QSysInfo::prettyProductName()),
+        QStringLiteral("CPU architecture: %1")
+            .arg(QSysInfo::currentCpuArchitecture()),
+        QStringLiteral("Logical processors: %1").arg(hardwareThreadCount()),
+        QStringLiteral("Processing mode: %1").arg(performanceModeName()),
+        QStringLiteral("Processing workers: %1").arg(processingWorkerCount()),
+        QStringLiteral("Model memory limit: %1 MB")
+            .arg(memoryMegabytes, 0, 'f', 0),
+        QStringLiteral("Audio runtime: %1")
+            .arg(audioReady_ ? QStringLiteral("ready")
+                             : QStringLiteral("unavailable"))
+    };
+
+    if (sourceLoaded()) {
+        lines.append(
+            QStringLiteral("Loaded source: %1 Hz, %2 channel(s), %3 s")
+                .arg(sourceSampleRate())
+                .arg(sourceChannels())
+                .arg(sourceDuration(), 0, 'f', 2));
+    } else {
+        lines.append(QStringLiteral("Loaded source: none"));
+    }
+
+    return lines.join(QLatin1Char('\n'));
+}
+
+void SpectraController::copyDiagnostics() {
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    if (clipboard == nullptr) {
+        setStatusText(QStringLiteral("Could not access the clipboard"));
+        return;
+    }
+    clipboard->setText(diagnosticsText());
+    setStatusText(QStringLiteral("Copied diagnostics to the clipboard"));
 }
 
 double SpectraController::synthFrequency() const {

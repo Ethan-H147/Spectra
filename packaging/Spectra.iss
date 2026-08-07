@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.0.1"
 #endif
 
 #ifndef SourceDir
@@ -11,7 +11,7 @@
 #endif
 
 #ifndef OutputBaseFilename
-  #define OutputBaseFilename "Spectra-1.0.0-windows-x64-setup"
+  #define OutputBaseFilename "Spectra-1.0.1-windows-x64-setup"
 #endif
 
 [Setup]

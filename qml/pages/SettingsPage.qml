@@ -431,6 +431,92 @@ ScrollView {
         Panel {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            title: "About Spectra"
+            subtitle: "Version, support, and local diagnostics"
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: theme.space1
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "Version"
+                    value: spectra.applicationVersion
+                    stateColor: theme.success
+                }
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "Build"
+                    value: spectra.buildCommit === "local"
+                        ? "Local build"
+                        : spectra.buildCommit.substring(0, 12)
+                }
+
+                StatusRow {
+                    Layout.fillWidth: true
+                    interactive: false
+                    label: "System"
+                    value: spectra.systemDescription
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Spectra processes audio locally and makes no network requests. Diagnostics omit filenames and audio content."
+                    color: theme.muted
+                    font.family: theme.bodyFamily
+                    font.pixelSize: theme.fontSize(12)
+                    wrapMode: Text.Wrap
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: theme.space1
+                    rowSpacing: theme.space1
+
+                    AppButton {
+                        Layout.fillWidth: true
+                        text: "Copy diagnostics"
+                        onClicked: spectra.copyDiagnostics()
+                    }
+
+                    AppButton {
+                        Layout.fillWidth: true
+                        text: "Releases"
+                        quiet: true
+                        onClicked: Qt.openUrlExternally(
+                            "https://github.com/Ethan-H147/Spectra/releases")
+                    }
+
+                    AppButton {
+                        Layout.fillWidth: true
+                        text: "Privacy policy"
+                        quiet: true
+                        onClicked: Qt.openUrlExternally(
+                            "https://github.com/Ethan-H147/Spectra/blob/main/PRIVACY.md")
+                    }
+
+                    AppButton {
+                        Layout.fillWidth: true
+                        text: "Report issue"
+                        quiet: true
+                        onClicked: Qt.openUrlExternally(
+                            "https://github.com/Ethan-H147/Spectra/issues/new/choose")
+                    }
+                }
+
+                Item {
+                    Layout.fillHeight: true
+                }
+            }
+        }
+
+        Panel {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             title: "Keyboard"
             subtitle: "Workspace and window shortcuts"
 

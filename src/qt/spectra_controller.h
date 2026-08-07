@@ -36,6 +36,9 @@ class SpectraController final : public QObject {
     Q_PROPERTY(int processingWorkerCount READ processingWorkerCount NOTIFY performanceChanged)
     Q_PROPERTY(int hardwareThreadCount READ hardwareThreadCount CONSTANT)
     Q_PROPERTY(QString processingBackendName READ processingBackendName CONSTANT)
+    Q_PROPERTY(QString applicationVersion READ applicationVersion CONSTANT)
+    Q_PROPERTY(QString buildCommit READ buildCommit CONSTANT)
+    Q_PROPERTY(QString systemDescription READ systemDescription CONSTANT)
 
     Q_PROPERTY(double synthFrequency READ synthFrequency WRITE setSynthFrequency NOTIFY synthChanged)
     Q_PROPERTY(double synthDuration READ synthDuration WRITE setSynthDuration NOTIFY synthChanged)
@@ -169,6 +172,9 @@ public:
     int processingWorkerCount() const;
     int hardwareThreadCount() const;
     QString processingBackendName() const;
+    QString applicationVersion() const;
+    QString buildCommit() const;
+    QString systemDescription() const;
 
     double synthFrequency() const;
     double synthDuration() const;
@@ -292,6 +298,8 @@ public:
     Q_INVOKABLE void setCurrentPage(int page);
     Q_INVOKABLE void setTextScale(double scale);
     Q_INVOKABLE void setPerformanceMode(int mode);
+    Q_INVOKABLE QString diagnosticsText() const;
+    Q_INVOKABLE void copyDiagnostics();
     Q_INVOKABLE void setSynthFrequency(double frequency);
     Q_INVOKABLE void setSynthDuration(double duration);
     Q_INVOKABLE void setSynthGain(double gain);
