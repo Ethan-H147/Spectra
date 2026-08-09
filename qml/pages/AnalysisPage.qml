@@ -6,8 +6,6 @@ import Spectra.Native
 ScrollView {
     id: root
 
-    signal importRequested()
-
     clip: true
     contentWidth: availableWidth
     contentHeight: pageLayout.height
@@ -35,12 +33,6 @@ ScrollView {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: theme.space2
-
-                AppButton {
-                    Layout.fillWidth: true
-                    text: spectra.sourceLoaded ? "Replace audio" : "Import audio"
-                    onClicked: root.importRequested()
-                }
 
                 GridLayout {
                     Layout.fillWidth: true

@@ -5,8 +5,6 @@ import QtQuick.Layouts
 Item {
     id: root
 
-    signal importRequested()
-
     Theme {
         id: theme
     }
@@ -46,10 +44,6 @@ Item {
                     }
                 }
 
-                AppButton {
-                    text: spectra.sourceLoaded ? "Replace audio" : "Import audio"
-                    onClicked: root.importRequested()
-                }
             }
 
             GridLayout {
@@ -159,11 +153,6 @@ Item {
                             }
                         }
 
-                        AppButton {
-                            visible: !spectra.sourceLoaded
-                            text: "Import audio"
-                            onClicked: root.importRequested()
-                        }
                     }
                 }
 

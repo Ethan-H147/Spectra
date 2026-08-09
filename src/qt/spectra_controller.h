@@ -1,6 +1,7 @@
 #ifndef SPECTRA_QT_SPECTRA_CONTROLLER_H
 #define SPECTRA_QT_SPECTRA_CONTROLLER_H
 
+#include <QByteArray>
 #include <QObject>
 #include <QStringList>
 #include <QTimer>
@@ -58,6 +59,8 @@ class SpectraController final : public QObject {
 
     Q_PROPERTY(bool sourceLoaded READ sourceLoaded NOTIFY sourceChanged)
     Q_PROPERTY(QString sourceFileName READ sourceFileName NOTIFY sourceChanged)
+    Q_PROPERTY(bool sourceImporting READ sourceImporting NOTIFY sourceImportChanged)
+    Q_PROPERTY(QString sourceImportFileName READ sourceImportFileName NOTIFY sourceImportChanged)
     Q_PROPERTY(int sourceChannels READ sourceChannels NOTIFY sourceChanged)
     Q_PROPERTY(int sourceSampleRate READ sourceSampleRate NOTIFY sourceChanged)
     Q_PROPERTY(double sourceDuration READ sourceDuration NOTIFY sourceChanged)
@@ -143,6 +146,7 @@ class SpectraController final : public QObject {
     Q_PROPERTY(int effectPlaybackSelection READ effectPlaybackSelection NOTIFY playbackChanged)
 
     Q_PROPERTY(QStringList eqPresetNames READ eqPresetNames CONSTANT)
+    Q_PROPERTY(QStringList eqBandShapeNames READ eqBandShapeNames CONSTANT)
     Q_PROPERTY(int eqPreset READ eqPreset NOTIFY eqChanged)
     Q_PROPERTY(QVariantList eqBands READ eqBands NOTIFY eqChanged)
     Q_PROPERTY(int eqBandCount READ eqBandCount NOTIFY eqChanged)
@@ -194,6 +198,8 @@ public:
 
     bool sourceLoaded() const;
     QString sourceFileName() const;
+    bool sourceImporting() const;
+    QString sourceImportFileName() const;
     int sourceChannels() const;
     int sourceSampleRate() const;
     double sourceDuration() const;
@@ -279,6 +285,7 @@ public:
     int effectPlaybackSelection() const;
 
     QStringList eqPresetNames() const;
+    QStringList eqBandShapeNames() const;
     int eqPreset() const;
     QVariantList eqBands() const;
     int eqBandCount() const;
@@ -359,6 +366,9 @@ public:
     Q_INVOKABLE void setEqBandEnabled(
         int index,
         bool enabled);
+    Q_INVOKABLE void setEqBandShape(
+        int index,
+        int shape);
     Q_INVOKABLE void removeEqBand(int index);
     Q_INVOKABLE void clearEqBands();
     Q_INVOKABLE void applyEqPreset(int preset);
@@ -381,6 +391,7 @@ signals:
     void synthChanged();
     void synthVisualizationChanged();
     void sourceChanged();
+    void sourceImportChanged();
     void analysisChanged();
     void reconstructionChanged();
     void fullFileChanged();
@@ -417,6 +428,10 @@ private:
     void rebuildSynth();
     void rebuildSynthVisualization();
     void rebuildSourceWaveform();
+    static void processAudioImportInBackground(
+        BackgroundTaskControl *control,
+        void *context);
+    void processAudioImportWork();
     void rebuildAnalysisPeaks();
     void rebuildAnalysisVisualization();
     void rebuildRegionModels(const SampleBuffer &region);
@@ -501,6 +516,13 @@ private:
     AudioClip synthClip_ = {};
 
     ImportedAudio importedAudio_ = {};
+    ImportedAudio importWorkerAudio_ = {};
+    BackgroundTask importTask_ = {};
+    QByteArray importWorkerPath_;
+    QString sourceImportFileName_;
+    bool sourceImporting_ = false;
+    bool importWorkerSucceeded_ = false;
+    char importWorkerError_[256] = {};
     AudioClip sourceClip_ = {};
     AudioClip regionClip_ = {};
     QString sourceFileName_;
@@ -600,6 +622,7 @@ private:
     PlaybackTarget lastEqPlaybackTarget_ = SourcePlayback;
     QTimer synthRebuildTimer_;
     QTimer playbackTimer_;
+    QTimer importTimer_;
     QTimer fullFileTimer_;
     QTimer effectTimer_;
     QTimer effectSpectrumTimer_;

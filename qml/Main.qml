@@ -632,6 +632,18 @@ ApplicationWindow {
                         Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                         spacing: theme.space1
 
+                        AudioImportBar {
+                            sourceLoaded: spectra.sourceLoaded
+                            importing: spectra.sourceImporting
+                            fileName: spectra.sourceImporting
+                                ? spectra.sourceImportFileName
+                                : spectra.sourceFileName
+                            durationSeconds: spectra.sourceDuration
+                            sampleRate: spectra.sourceSampleRate
+                            channels: spectra.sourceChannels
+                            onImportRequested: importDialog.open()
+                        }
+
                         AppButton {
                             iconName: "help"
                             iconOnly: true
@@ -693,9 +705,6 @@ ApplicationWindow {
                 Connections {
                     target: pageLoader.item
                     ignoreUnknownSignals: true
-                    function onImportRequested() {
-                        importDialog.open()
-                    }
                     function onExportRequested() {
                         exportDialog.open()
                     }

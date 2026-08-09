@@ -4,8 +4,6 @@ import QtQuick.Layouts
 
 Item {
     id: root
-
-    signal importRequested()
     signal exportEqRequested()
 
     component BandIconButton: Button {
@@ -103,11 +101,13 @@ Item {
     component PresetComboBox: ComboBox {
         id: presetControl
 
+        property string accessibleName: "Equalizer preset"
+
         implicitHeight: 40
         leftPadding: 12
         rightPadding: 40
         hoverEnabled: true
-        Accessible.name: "Equalizer preset"
+        Accessible.name: accessibleName
 
         contentItem: Text {
             text: presetControl.displayText
@@ -224,17 +224,17 @@ Item {
     readonly property bool compact: width < 1050
     readonly property var presetDescriptions: [
         "No tonal change",
-        "A gentle, general-purpose contour",
-        "Adds weight below 500 Hz",
-        "Focuses the lowest bass frequencies",
-        "Fuller lows with slightly softer highs",
-        "Reduces mud and brings voices forward",
-        "Adds detail and air to high frequencies",
-        "A lighter, modest high-frequency lift",
-        "Lifts lows and highs for quiet listening",
-        "Cuts very-low-frequency vibration and noise",
-        "Softens the most fatiguing upper mids",
-        "Cleans the lows and emphasizes speech"
+        "Subtle shelves with restrained midrange shaping",
+        "A low shelf adds weight without clouding the mids",
+        "Focused sub-bass lift with gentle upper-bass support",
+        "Fuller lows and low mids with softened highs",
+        "Reduces mud, then lifts vocal presence and air",
+        "Presence bell plus a stronger high-frequency shelf",
+        "A modest presence lift and smooth air shelf",
+        "Bass and treble shelves for quieter listening",
+        "Strongly attenuates vibration below 110 Hz",
+        "A broad upper-mid cut with a softer top end",
+        "Cleans lows, reduces mud, and emphasizes speech"
     ]
     readonly property string stateLabel:
         spectra.eqProcessing
@@ -295,7 +295,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Select a frequency range, then move it vertically to shape the sound"
+                    text: "Draw a band, choose its curve, then move it vertically to shape the sound"
                     color: theme.muted
                     font.family: theme.bodyFamily
                     font.pixelSize: theme.fontSize(11)
@@ -340,7 +340,7 @@ Item {
                 Layout.minimumWidth: 560
                 title: "Interactive spectrum"
                 subtitle: spectra.sourceLoaded
-                    ? "Drag empty space horizontally to add a band"
+                    ? "Drag empty space horizontally to add a Range band"
                     : "Import a track to begin"
 
                 RangeEqSpectrumView {
@@ -360,8 +360,8 @@ Item {
                 title: "Bands"
                 subtitle: spectra.eqBandCount
                     + (spectra.eqBandCount === 1
-                        ? " selected range"
-                        : " selected ranges")
+                        ? " curve"
+                        : " curves")
 
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -473,7 +473,7 @@ Item {
 
                             width: ListView.view.width
                             height: Math.max(
-                                96,
+                                138,
                                 bandContent.implicitHeight
                                     + theme.space1 * 2)
                             radius: 4
@@ -529,6 +529,8 @@ Item {
                                         Layout.fillWidth: true
                                         text: "Band "
                                             + (bandRow.index + 1)
+                                            + "  ·  "
+                                            + bandRow.modelData.shapeName
                                         color: theme.text
                                         font.family:
                                             theme.headingFamily
@@ -582,6 +584,25 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: theme.space1
+
+                                    PresetComboBox {
+                                        Layout.preferredWidth: 124
+                                        implicitHeight: 34
+                                        accessibleName: "Band "
+                                            + (bandRow.index + 1)
+                                            + " curve shape"
+                                        model:
+                                            spectra.eqBandShapeNames
+                                        currentIndex:
+                                            bandRow.modelData.shape
+                                        enabled:
+                                            !spectra.eqProcessing
+                                        onActivated: function(index) {
+                                            spectra.setEqBandShape(
+                                                bandRow.index,
+                                                index)
+                                        }
+                                    }
 
                                     Text {
                                         Layout.fillWidth: true
@@ -671,22 +692,16 @@ Item {
 
                 AppButton {
                     Layout.preferredWidth: 190
-                    text: !spectra.sourceLoaded
-                        ? "Import audio"
-                        : (spectra.eqProcessing
-                            ? "Building  "
-                                + Math.round(
-                                    spectra.eqProgress * 100)
-                                + "%"
-                            : "Build output")
-                    enabled: !spectra.eqProcessing
+                    text: spectra.eqProcessing
+                        ? "Building  "
+                            + Math.round(
+                                spectra.eqProgress * 100)
+                            + "%"
+                        : "Build output"
+                    enabled: spectra.sourceLoaded
+                             && !spectra.eqProcessing
                     accentColor: theme.accent
-                    onClicked: {
-                        if (spectra.sourceLoaded)
-                            spectra.buildEq()
-                        else
-                            root.importRequested()
-                    }
+                    onClicked: spectra.buildEq()
                 }
 
                 AppButton {

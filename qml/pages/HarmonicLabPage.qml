@@ -38,12 +38,7 @@ Item {
                 Layout.fillWidth: true
                 visible: !spectra.sourceLoaded
                 title: "Import audio to begin"
-                subtitle: "Compare two simplified reconstructions of a selected passage"
-
-                AppButton {
-                    text: "Open Audio Analysis to import"
-                    onClicked: spectra.setCurrentPage(2)
-                }
+                subtitle: "Use Import audio in the top bar to compare two simplified reconstructions"
             }
 
             Panel {

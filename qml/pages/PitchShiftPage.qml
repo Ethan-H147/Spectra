@@ -5,8 +5,6 @@ import Spectra.Native
 
 Item {
     id: root
-
-    signal importRequested()
     signal exportEffectRequested()
 
     property bool spectrumDrawerOpen: false
@@ -333,21 +331,15 @@ Item {
 
                     AppButton {
                         Layout.fillWidth: true
-                        text: !spectra.sourceLoaded
-                            ? "Import audio"
-                            : (spectra.effectProcessing
-                                ? "Processing…"
-                                : (spectra.effectReady
-                                    ? "Rebuild output"
-                                    : "Build output"))
-                        enabled: !spectra.effectProcessing
+                        text: spectra.effectProcessing
+                            ? "Processing…"
+                            : (spectra.effectReady
+                                ? "Rebuild output"
+                                : "Build output")
+                        enabled: spectra.sourceLoaded
+                                 && !spectra.effectProcessing
                         accentColor: theme.accent
-                        onClicked: {
-                            if (spectra.sourceLoaded)
-                                spectra.buildEffect()
-                            else
-                                root.importRequested()
-                        }
+                        onClicked: spectra.buildEffect()
                     }
 
                     AppButton {

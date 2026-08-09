@@ -99,6 +99,14 @@ const char *const kEqPresetNames[kEqPresetCount] = {
     "Podcast / Speech",
 };
 
+const char *const kEqBandShapeNames[
+    SPECTRAL_EQ_SHAPE_COUNT] = {
+    "Range",
+    "Bell",
+    "Low shelf",
+    "High shelf",
+};
+
 double clampValue(double value, double minimum, double maximum) {
     return std::max(minimum, std::min(value, maximum));
 }
@@ -108,7 +116,8 @@ void appendEqPresetBand(
     double maximumFrequency,
     double lowHz,
     double highHz,
-    double gainDb) {
+    double gainDb,
+    SpectralEqBandShape shape) {
     if (bands.size() >= kMaximumEqBands ||
         maximumFrequency <= 0.0 ||
         lowHz >= maximumFrequency) {
@@ -129,6 +138,7 @@ void appendEqPresetBand(
         static_cast<float>(
             clampValue(gainDb, -24.0, 24.0)),
         true,
+        shape,
     });
 }
 
@@ -140,68 +150,113 @@ std::vector<SpectralEqBand> buildEqPresetBands(
         [&bands, maximumFrequency](
             double lowHz,
             double highHz,
-            double gainDb) {
+            double gainDb,
+            SpectralEqBandShape shape) {
             appendEqPresetBand(
                 bands,
                 maximumFrequency,
                 lowHz,
                 highHz,
-                gainDb);
+                gainDb,
+                shape);
         };
+
+    const auto range = [&add](
+        double lowHz,
+        double highHz,
+        double gainDb) {
+        add(
+            lowHz,
+            highHz,
+            gainDb,
+            SPECTRAL_EQ_SHAPE_RANGE);
+    };
+    const auto bell = [&add](
+        double lowHz,
+        double highHz,
+        double gainDb) {
+        add(
+            lowHz,
+            highHz,
+            gainDb,
+            SPECTRAL_EQ_SHAPE_BELL);
+    };
+    const auto lowShelf = [&add](
+        double lowHz,
+        double highHz,
+        double gainDb) {
+        add(
+            lowHz,
+            highHz,
+            gainDb,
+            SPECTRAL_EQ_SHAPE_LOW_SHELF);
+    };
+    const auto highShelf = [&add](
+        double lowHz,
+        double highHz,
+        double gainDb) {
+        add(
+            lowHz,
+            highHz,
+            gainDb,
+            SPECTRAL_EQ_SHAPE_HIGH_SHELF);
+    };
 
     switch (preset) {
     case 0:
-        add(0.0, maximumFrequency, 0.0);
+        range(0.0, maximumFrequency, 0.0);
         break;
     case 1:
-        add(30.0, 180.0, 1.5);
-        add(250.0, 700.0, -0.75);
-        add(2000.0, 5000.0, 1.0);
-        add(8000.0, 16000.0, 1.5);
+        lowShelf(70.0, 320.0, 1.0);
+        bell(250.0, 900.0, -0.75);
+        bell(1600.0, 4800.0, 1.0);
+        highShelf(7000.0, 14000.0, 1.0);
         break;
     case 2:
-        add(20.0, 250.0, 4.0);
-        add(250.0, 500.0, 1.5);
+        lowShelf(70.0, 280.0, 4.0);
+        bell(120.0, 450.0, 1.0);
         break;
     case 3:
-        add(20.0, 90.0, 5.0);
-        add(90.0, 180.0, 1.5);
+        lowShelf(35.0, 160.0, 5.0);
+        bell(60.0, 180.0, 1.5);
         break;
     case 4:
-        add(30.0, 220.0, 2.5);
-        add(220.0, 600.0, 1.0);
-        add(6000.0, 16000.0, -1.0);
+        lowShelf(90.0, 400.0, 2.0);
+        bell(180.0, 650.0, 1.25);
+        highShelf(6000.0, 12000.0, -1.5);
         break;
     case 5:
-        add(20.0, 100.0, -5.0);
-        add(180.0, 500.0, -1.5);
-        add(1200.0, 4000.0, 2.5);
-        add(4000.0, 8000.0, 1.0);
+        lowShelf(70.0, 250.0, -2.5);
+        bell(180.0, 600.0, -1.5);
+        bell(1200.0, 4500.0, 2.5);
+        highShelf(6000.0, 12000.0, 1.0);
         break;
     case 6:
-        add(3500.0, 8000.0, 2.5);
-        add(8000.0, 16000.0, 4.0);
+        bell(2500.0, 7000.0, 1.5);
+        highShelf(5500.0, 11000.0, 4.0);
         break;
     case 7:
-        add(2000.0, 6000.0, 1.5);
-        add(6000.0, 14000.0, 2.5);
+        bell(1800.0, 6000.0, 1.5);
+        highShelf(6500.0, 14000.0, 2.5);
         break;
     case 8:
-        add(20.0, 220.0, 3.0);
-        add(4000.0, 16000.0, 2.5);
+        lowShelf(60.0, 300.0, 3.5);
+        bell(350.0, 2500.0, -1.0);
+        highShelf(5000.0, 12000.0, 3.0);
         break;
     case 9:
-        add(0.0, 45.0, -18.0);
-        add(45.0, 90.0, -8.0);
+        range(0.0, 40.0, -12.0);
+        lowShelf(20.0, 110.0, -18.0);
         break;
     case 10:
-        add(2500.0, 8000.0, -3.0);
+        bell(2200.0, 7500.0, -3.5);
+        highShelf(8500.0, 15000.0, -1.0);
         break;
     case 11:
-        add(0.0, 80.0, -12.0);
-        add(120.0, 350.0, -2.0);
-        add(1500.0, 4500.0, 2.5);
-        add(8000.0, 16000.0, -1.0);
+        lowShelf(50.0, 140.0, -12.0);
+        bell(150.0, 500.0, -2.0);
+        bell(1200.0, 4500.0, 3.0);
+        highShelf(7500.0, 14000.0, -1.5);
         break;
     default:
         break;
@@ -773,12 +828,14 @@ SpectraController::SpectraController(QObject *parent)
     background_task_init(&effectTask_);
     background_task_init(&effectSpectrumTask_);
     background_task_init(&eqTask_);
+    background_task_init(&importTask_);
     stft_reconstruction_job_init(&fullFileStftJob_);
     stft_reconstruction_job_init(&fullFileStftJobRight_);
     reconstruction_cache_init(
         &reconstructionCache_,
         kReconstructionCacheLimit);
     imported_audio_init(&importedAudio_);
+    imported_audio_init(&importWorkerAudio_);
 
     InitAudioDevice();
     audioReady_ = IsAudioDeviceReady();
@@ -796,6 +853,13 @@ SpectraController::SpectraController(QObject *parent)
     playbackTimer_.setInterval(50);
     connect(&playbackTimer_, &QTimer::timeout, this, &SpectraController::refreshPlaybackState);
     playbackTimer_.start();
+
+    importTimer_.setInterval(16);
+    connect(
+        &importTimer_,
+        &QTimer::timeout,
+        this,
+        &SpectraController::processAudioImportWork);
 
     fullFileTimer_.setInterval(16);
     connect(
@@ -830,12 +894,14 @@ SpectraController::SpectraController(QObject *parent)
 }
 
 SpectraController::~SpectraController() {
+    importTimer_.stop();
     eqTimer_.stop();
     effectSpectrumTimer_.stop();
     effectTimer_.stop();
     fullFileTimer_.stop();
     background_task_cancel_and_join(
         &effectSpectrumTask_);
+    background_task_cancel_and_join(&importTask_);
     background_task_cancel_and_join(&effectTask_);
     background_task_cancel_and_join(&eqTask_);
     background_task_cancel_and_join(&spectrogramTask_);
@@ -869,6 +935,7 @@ SpectraController::~SpectraController() {
     audio_clip_unload(&regionClip_);
     spectrum_free(&analysisSpectrumBuffer_);
     audio_clip_unload(&sourceClip_);
+    imported_audio_unload(&importWorkerAudio_);
     imported_audio_unload(&importedAudio_);
     audio_clip_unload(&synthClip_);
     spectrum_free(&synthSpectrumBuffer_);
@@ -1066,6 +1133,14 @@ bool SpectraController::sourceLoaded() const {
 
 QString SpectraController::sourceFileName() const {
     return sourceFileName_;
+}
+
+bool SpectraController::sourceImporting() const {
+    return sourceImporting_;
+}
+
+QString SpectraController::sourceImportFileName() const {
+    return sourceImportFileName_;
 }
 
 int SpectraController::sourceChannels() const {
@@ -1534,6 +1609,19 @@ QStringList SpectraController::eqPresetNames() const {
     return result;
 }
 
+QStringList SpectraController::eqBandShapeNames() const {
+    QStringList result;
+    result.reserve(SPECTRAL_EQ_SHAPE_COUNT);
+    for (int index = 0;
+         index < SPECTRAL_EQ_SHAPE_COUNT;
+         ++index) {
+        result.append(
+            QString::fromUtf8(
+                kEqBandShapeNames[index]));
+    }
+    return result;
+}
+
 int SpectraController::eqPreset() const {
     return eqPreset_;
 }
@@ -1562,6 +1650,19 @@ QVariantList SpectraController::eqBands() const {
         entry.insert(
             QStringLiteral("enabled"),
             band.enabled);
+        entry.insert(
+            QStringLiteral("shape"),
+            static_cast<int>(band.shape));
+        const int shapeIndex =
+            static_cast<int>(band.shape) >= 0 &&
+                    static_cast<int>(band.shape) <
+                        SPECTRAL_EQ_SHAPE_COUNT
+                ? static_cast<int>(band.shape)
+                : SPECTRAL_EQ_SHAPE_RANGE;
+        entry.insert(
+            QStringLiteral("shapeName"),
+            QString::fromUtf8(
+                kEqBandShapeNames[shapeIndex]));
         result.append(entry);
     }
     return result;
@@ -2746,6 +2847,7 @@ int SpectraController::addEqBand(
         static_cast<float>(
             clampValue(gainDb, -24.0, 24.0)),
         true,
+        SPECTRAL_EQ_SHAPE_RANGE,
     });
     eqPreset_ = -1;
     clearEqOutput();
@@ -2785,6 +2887,7 @@ void SpectraController::updateEqBand(
         static_cast<float>(
             clampValue(gainDb, -24.0, 24.0)),
         eqBands_[static_cast<size_t>(index)].enabled,
+        eqBands_[static_cast<size_t>(index)].shape,
     };
     const SpectralEqBand &current =
         eqBands_[static_cast<size_t>(index)];
@@ -2815,6 +2918,30 @@ void SpectraController::setEqBandEnabled(
     }
     eqBands_[static_cast<size_t>(index)].enabled =
         enabled;
+    eqPreset_ = -1;
+    clearEqOutput();
+    rebuildEqSpectrumPreview();
+    emit eqChanged();
+    emit playbackChanged();
+}
+
+void SpectraController::setEqBandShape(
+    int index,
+    int shape) {
+    if (eqProcessing() || index < 0 ||
+        static_cast<size_t>(index) >= eqBands_.size()) {
+        return;
+    }
+    const SpectralEqBandShape bounded =
+        shape >= 0 && shape < SPECTRAL_EQ_SHAPE_COUNT
+            ? static_cast<SpectralEqBandShape>(shape)
+            : SPECTRAL_EQ_SHAPE_RANGE;
+    SpectralEqBand &band =
+        eqBands_[static_cast<size_t>(index)];
+    if (band.shape == bounded) {
+        return;
+    }
+    band.shape = bounded;
     eqPreset_ = -1;
     clearEqOutput();
     rebuildEqSpectrumPreview();
@@ -3059,13 +3186,57 @@ void SpectraController::haltAllAudio() {
     playbackTarget_ = NoPlayback;
 }
 
-void SpectraController::importAudioFile(const QUrl &url) {
-    const QString localPath = url.isLocalFile() ? url.toLocalFile() : url.toString();
-    if (localPath.isEmpty()) {
+void SpectraController::processAudioImportInBackground(
+    BackgroundTaskControl *control,
+    void *context) {
+    auto *controller =
+        static_cast<SpectraController *>(context);
+    if (controller == nullptr || control == nullptr) {
         return;
     }
 
-    stopPlayback();
+    imported_audio_unload(
+        &controller->importWorkerAudio_);
+    imported_audio_init(
+        &controller->importWorkerAudio_);
+    controller->importWorkerSucceeded_ = false;
+    controller->importWorkerError_[0] = '\0';
+    if (background_task_cancel_requested(control)) {
+        return;
+    }
+
+    controller->importWorkerSucceeded_ =
+        imported_audio_load(
+            controller->importWorkerPath_.constData(),
+            &controller->importWorkerAudio_,
+            controller->importWorkerError_,
+            sizeof(controller->importWorkerError_));
+    background_task_report_progress(control, 1.0f);
+}
+
+void SpectraController::processAudioImportWork() {
+    if (!background_task_has_work(&importTask_)) {
+        importTimer_.stop();
+        return;
+    }
+    if (!background_task_is_complete(&importTask_)) {
+        return;
+    }
+
+    background_task_join(&importTask_);
+    importTimer_.stop();
+    sourceImporting_ = false;
+
+    if (!importWorkerSucceeded_) {
+        imported_audio_unload(&importWorkerAudio_);
+        imported_audio_init(&importWorkerAudio_);
+        sourceImportFileName_.clear();
+        setStatusText(
+            QString::fromUtf8(importWorkerError_));
+        emit sourceImportChanged();
+        return;
+    }
+
     resetAnalysis();
     resetFullFile();
     resetEq();
@@ -3073,21 +3244,18 @@ void SpectraController::importAudioFile(const QUrl &url) {
     sourceWaveformMinimums_.clear();
     sourceWaveformMaximums_.clear();
     audio_clip_unload(&sourceClip_);
-    imported_audio_unload(&importedAudio_);
-    imported_audio_init(&importedAudio_);
     audio_clip_init(&sourceClip_);
+    imported_audio_unload(&importedAudio_);
+    importedAudio_ = importWorkerAudio_;
+    imported_audio_init(&importWorkerAudio_);
 
-    QByteArray encodedPath = localPath.toUtf8();
-    char error[256] = {};
-    if (!imported_audio_load(encodedPath.constData(), &importedAudio_, error, sizeof(error))) {
-        setStatusText(QString::fromUtf8(error));
-        emit sourceChanged();
-        return;
-    }
     if (audioReady_) {
-        audio_clip_set_interleaved(&sourceClip_, &importedAudio_.interleaved);
+        audio_clip_set_interleaved(
+            &sourceClip_,
+            &importedAudio_.interleaved);
     }
-    sourceFileName_ = QFileInfo(localPath).fileName();
+    sourceFileName_ = sourceImportFileName_;
+    sourceImportFileName_.clear();
     effectFrequencyShift_ = clampValue(
         effectFrequencyShift_,
         -std::min(
@@ -3099,7 +3267,9 @@ void SpectraController::importAudioFile(const QUrl &url) {
     rebuildEffectSourceSpectrum();
     rebuildEffectSpectrumPreview();
     regionDuration_ = std::min(1.0, sourceDuration());
-    regionStart_ = std::max(0.0, (sourceDuration() - regionDuration_) * 0.5);
+    regionStart_ = std::max(
+        0.0,
+        (sourceDuration() - regionDuration_) * 0.5);
     const int availableGlobalComponents =
         global_fourier_available_component_count(
             importedAudio_.mono.count);
@@ -3115,12 +3285,48 @@ void SpectraController::importAudioFile(const QUrl &url) {
             recommendedChannels > 1U ? 1 : 0;
     }
     rebuildSourceWaveform();
-    setStatusText(QStringLiteral("Loaded %1").arg(sourceFileName_));
+    setStatusText(
+        QStringLiteral("Loaded %1").arg(sourceFileName_));
     emit sourceChanged();
+    emit sourceImportChanged();
     emit effectChanged();
     emit playbackChanged();
     analyzeRegion();
     startSpectrogramBuild();
+}
+
+void SpectraController::importAudioFile(const QUrl &url) {
+    const QString localPath =
+        url.isLocalFile() ? url.toLocalFile() : url.toString();
+    if (localPath.isEmpty() || sourceImporting_) {
+        return;
+    }
+
+    stopPlayback();
+    sourceImportFileName_ =
+        QFileInfo(localPath).fileName();
+    importWorkerPath_ = localPath.toUtf8();
+    importWorkerSucceeded_ = false;
+    importWorkerError_[0] = '\0';
+    sourceImporting_ = true;
+
+    if (!background_task_start(
+            &importTask_,
+            &SpectraController::processAudioImportInBackground,
+            this)) {
+        sourceImporting_ = false;
+        sourceImportFileName_.clear();
+        setStatusText(QStringLiteral(
+            "Could not start the audio import worker"));
+        emit sourceImportChanged();
+        return;
+    }
+
+    setStatusText(
+        QStringLiteral("Loading %1…")
+            .arg(sourceImportFileName_));
+    emit sourceImportChanged();
+    importTimer_.start();
 }
 
 bool SpectraController::exportSynthFile(const QUrl &url) {

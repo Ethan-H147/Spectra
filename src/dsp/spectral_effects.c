@@ -1291,7 +1291,7 @@ bool analytic_frequency_shift(
     return true;
 }
 
-static float smooth_eq_band_weight(
+static float smooth_range_eq_band_weight(
     float frequency,
     const SpectralEqBand *band) {
     if (band == NULL || !band->enabled ||
@@ -1319,6 +1319,70 @@ static float smooth_eq_band_weight(
     return 0.5f - 0.5f * cosf((float)M_PI * phase);
 }
 
+static float smooth_eq_band_weight(
+    float frequency,
+    const SpectralEqBand *band) {
+    if (band == NULL || !band->enabled ||
+        !isfinite(frequency) ||
+        !isfinite(band->low_hz) ||
+        !isfinite(band->high_hz) ||
+        !isfinite(band->gain_db) ||
+        band->high_hz <= band->low_hz) {
+        return 0.0f;
+    }
+
+    const float normalized = fmaxf(
+        0.0f,
+        fminf(
+            1.0f,
+            (frequency - band->low_hz) /
+                (band->high_hz - band->low_hz)));
+    switch (band->shape) {
+        case SPECTRAL_EQ_SHAPE_BELL:
+            if (frequency <= band->low_hz ||
+                frequency >= band->high_hz) {
+                return 0.0f;
+            }
+            return 0.5f -
+                0.5f * cosf(
+                    2.0f * (float)M_PI * normalized);
+        case SPECTRAL_EQ_SHAPE_LOW_SHELF:
+            if (frequency <= band->low_hz) {
+                return 1.0f;
+            }
+            if (frequency >= band->high_hz) {
+                return 0.0f;
+            }
+            return 0.5f +
+                0.5f * cosf(
+                    (float)M_PI * normalized);
+        case SPECTRAL_EQ_SHAPE_HIGH_SHELF:
+            if (frequency <= band->low_hz) {
+                return 0.0f;
+            }
+            if (frequency >= band->high_hz) {
+                return 1.0f;
+            }
+            return 0.5f -
+                0.5f * cosf(
+                    (float)M_PI * normalized);
+        case SPECTRAL_EQ_SHAPE_RANGE:
+        default:
+            return smooth_range_eq_band_weight(
+                frequency, band);
+    }
+}
+
+float spectral_eq_band_response_db(
+    float frequency,
+    const SpectralEqBand *band) {
+    if (band == NULL || !isfinite(frequency)) {
+        return 0.0f;
+    }
+    return band->gain_db *
+        smooth_eq_band_weight(frequency, band);
+}
+
 float spectral_eq_response_db(
     float frequency,
     const SpectralEqBand *bands,
@@ -1329,9 +1393,8 @@ float spectral_eq_response_db(
     }
     float total_db = 0.0f;
     for (size_t index = 0U; index < band_count; ++index) {
-        total_db += bands[index].gain_db *
-                    smooth_eq_band_weight(
-                        frequency, &bands[index]);
+        total_db += spectral_eq_band_response_db(
+            frequency, &bands[index]);
     }
     return fmaxf(-72.0f, fminf(48.0f, total_db));
 }

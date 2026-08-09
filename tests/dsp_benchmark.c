@@ -115,9 +115,12 @@ int main(int argument_count, char **arguments) {
     interleaved_buffer_free(&output);
 
     const SpectralEqBand bands[] = {
-        {20.0f, 250.0f, 4.0f, true},
-        {1800.0f, 4800.0f, 2.0f, true},
-        {7000.0f, 15000.0f, -1.5f, true},
+        {20.0f, 250.0f, 4.0f, true,
+         SPECTRAL_EQ_SHAPE_RANGE},
+        {1800.0f, 4800.0f, 2.0f, true,
+         SPECTRAL_EQ_SHAPE_BELL},
+        {7000.0f, 15000.0f, -1.5f, true,
+         SPECTRAL_EQ_SHAPE_HIGH_SHELF},
     };
     started = platform_monotonic_seconds();
     succeeded = spectral_range_equalize(

@@ -508,6 +508,87 @@ static float measured_tone_amplitude(
         (double)count);
 }
 
+static int test_spectral_eq_curve_shapes(void) {
+    SpectralEqBand band = {
+        .low_hz = 100.0f,
+        .high_hz = 300.0f,
+        .gain_db = 6.0f,
+        .enabled = true,
+        .shape = SPECTRAL_EQ_SHAPE_RANGE,
+    };
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                200.0f, &band) - 6.0f) < 0.001f,
+        "range EQ should keep its flat-topped response");
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                100.0f, &band)) < 0.001f,
+        "range EQ should taper to zero at its boundary");
+
+    band.shape = SPECTRAL_EQ_SHAPE_BELL;
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                200.0f, &band) - 6.0f) < 0.001f,
+        "bell EQ should reach full gain at its center");
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                150.0f, &band) - 3.0f) < 0.001f,
+        "bell EQ should use a smooth raised-cosine shoulder");
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                300.0f, &band)) < 0.001f,
+        "bell EQ should return to zero at its boundary");
+
+    band.gain_db = -6.0f;
+    band.shape = SPECTRAL_EQ_SHAPE_LOW_SHELF;
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                50.0f, &band) + 6.0f) < 0.001f,
+        "low shelf should apply full gain below its transition");
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                200.0f, &band) + 3.0f) < 0.001f,
+        "low shelf should be half strength at transition center");
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                350.0f, &band)) < 0.001f,
+        "low shelf should be flat above its transition");
+
+    band.gain_db = 6.0f;
+    band.shape = SPECTRAL_EQ_SHAPE_HIGH_SHELF;
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                50.0f, &band)) < 0.001f,
+        "high shelf should be flat below its transition");
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                200.0f, &band) - 3.0f) < 0.001f,
+        "high shelf should be half strength at transition center");
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                350.0f, &band) - 6.0f) < 0.001f,
+        "high shelf should apply full gain above its transition");
+
+    band.enabled = false;
+    ASSERT_TRUE(
+        fabsf(
+            spectral_eq_band_response_db(
+                350.0f, &band)) < 0.001f,
+        "disabled EQ shapes should have no response");
+    return 0;
+}
+
 static int test_spectral_range_equalizer(void) {
     const unsigned int sample_rate = 8192U;
     const size_t frame_count = 32768U;
@@ -541,18 +622,21 @@ static int test_spectral_range_equalizer(void) {
             .high_hz = 512.0f,
             .gain_db = 6.0f,
             .enabled = true,
+            .shape = SPECTRAL_EQ_SHAPE_RANGE,
         },
         {
             .low_hz = 192.0f,
             .high_hz = 640.0f,
             .gain_db = 6.0f,
             .enabled = true,
+            .shape = SPECTRAL_EQ_SHAPE_RANGE,
         },
         {
             .low_hz = 1200.0f,
             .high_hz = 1800.0f,
             .gain_db = -24.0f,
             .enabled = false,
+            .shape = SPECTRAL_EQ_SHAPE_RANGE,
         },
     };
     InterleavedBuffer equalized = {0};
@@ -1285,6 +1369,7 @@ int main(int argc, char **argv) {
     if (test_phase_vocoder_pitch_shift() != 0) return 1;
     if (test_parallel_phase_vocoder_matches_single_thread() != 0) return 1;
     if (test_analytic_frequency_shift() != 0) return 1;
+    if (test_spectral_eq_curve_shapes() != 0) return 1;
     if (test_spectral_range_equalizer() != 0) return 1;
     if (test_global_fourier_fixed_components() != 0) return 1;
     if (test_global_fourier_dc_and_nyquist() != 0) return 1;

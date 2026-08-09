@@ -51,7 +51,7 @@ Spectra provides eight workspaces:
 4. **Harmonic Lab** compares harmonic-only resynthesis with an evolving Fourier reconstruction across a selectable 1–8 second passage.
 5. **Spectrogram** displays STFT magnitude, exports the visualization as a landscape PDF, and builds complete-file reconstructions.
 6. **Pitch & Shift** builds tape-speed, duration-preserving pitch, and fixed-Hz frequency effects with an overlaid before/after spectrum.
-7. **Range EQ** lets you zoom, pan, and fit the horizontal frequency axis or return to the full 0 Hz-to-Nyquist range. Draw smooth bands on the full-track spectrum, stack overlapping gains, and compare predicted with measured output.
+7. **Range EQ** lets you zoom, pan, and fit the horizontal frequency axis or return to the full 0 Hz-to-Nyquist range. Draw flat-top Range bands or reshape them as Bell, Low shelf, and High shelf curves, stack overlapping gains, apply musically voiced presets, and compare predicted with measured output.
 8. **Settings** controls text scale, the whole-file model memory limit, processing performance, and local diagnostics.
 
 Imported audio supports WAV, MP3, OGG, and FLAC. Mono and stereo sources retain their playback channel layout. Sources with more than two channels produce mono playback and analysis buffers.
@@ -234,7 +234,7 @@ build\Release\dsp_benchmark.exe --single
 - STFT component counts apply separately to each frame and channel.
 - Phase-vocoder pitch shifting can soften transients at large intervals.
 - Fixed-Hz frequency shifting does not preserve harmonic ratios.
-- Range EQ bands use smooth edge transitions; overlapping band gains add together.
+- Range EQ provides smooth Range, Bell, Low shelf, and High shelf curves; overlapping band gains add together.
 - Spectra does not identify instruments or use machine learning.
 
 ## License

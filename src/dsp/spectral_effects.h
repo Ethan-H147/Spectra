@@ -8,12 +8,25 @@
 typedef bool (*SpectralEffectProgressCallback)(float progress,
                                                void *context);
 
+typedef enum {
+    SPECTRAL_EQ_SHAPE_RANGE = 0,
+    SPECTRAL_EQ_SHAPE_BELL = 1,
+    SPECTRAL_EQ_SHAPE_LOW_SHELF = 2,
+    SPECTRAL_EQ_SHAPE_HIGH_SHELF = 3,
+    SPECTRAL_EQ_SHAPE_COUNT = 4
+} SpectralEqBandShape;
+
 typedef struct {
     float low_hz;
     float high_hz;
     float gain_db;
     bool enabled;
+    SpectralEqBandShape shape;
 } SpectralEqBand;
+
+float spectral_eq_band_response_db(
+    float frequency,
+    const SpectralEqBand *band);
 
 float spectral_eq_response_db(
     float frequency,

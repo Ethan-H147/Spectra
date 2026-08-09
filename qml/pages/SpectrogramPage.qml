@@ -4,8 +4,6 @@ import QtQuick.Layouts
 
 Item {
     id: root
-
-    signal importRequested()
     signal exportFullFileRequested()
     signal exportSpectrogramPdfRequested()
 
@@ -300,13 +298,6 @@ Item {
                                 }
                             }
                         }
-                    }
-
-                    AppButton {
-                        Layout.fillWidth: true
-                        visible: !spectra.sourceLoaded
-                        text: "Choose audio"
-                        onClicked: root.importRequested()
                     }
 
                     RowLayout {

@@ -43,6 +43,80 @@ ColumnLayout {
             + gain.toFixed(1) + " dB"
     }
 
+    function bandWeight(band, frequency) {
+        if (!band || !band.enabled
+                || band.highHz <= band.lowHz)
+            return 0
+        const width = band.highHz - band.lowHz
+        const normalized = Math.max(
+            0,
+            Math.min(
+                1,
+                (frequency - band.lowHz) / width))
+        if (band.shape === 1) {
+            if (frequency <= band.lowHz
+                    || frequency >= band.highHz)
+                return 0
+            return 0.5 - 0.5 * Math.cos(
+                2 * Math.PI * normalized)
+        }
+        if (band.shape === 2) {
+            if (frequency <= band.lowHz)
+                return 1
+            if (frequency >= band.highHz)
+                return 0
+            return 0.5 + 0.5 * Math.cos(
+                Math.PI * normalized)
+        }
+        if (band.shape === 3) {
+            if (frequency <= band.lowHz)
+                return 0
+            if (frequency >= band.highHz)
+                return 1
+            return 0.5 - 0.5 * Math.cos(
+                Math.PI * normalized)
+        }
+        if (frequency < band.lowHz
+                || frequency > band.highHz)
+            return 0
+        const transition = Math.max(1, width * 0.12)
+        const distance = Math.min(
+            frequency - band.lowHz,
+            band.highHz - frequency)
+        if (distance >= transition)
+            return 1
+        const phase = Math.max(
+            0, Math.min(1, distance / transition))
+        return 0.5 - 0.5 * Math.cos(Math.PI * phase)
+    }
+
+    function bandResponse(band, frequency) {
+        return band.gainDb * bandWeight(band, frequency)
+    }
+
+    function bandHasResponse(band) {
+        return band && band.enabled
+            && Math.abs(band.gainDb) > 0.01
+    }
+
+    function bandAffectsFrequency(band, frequency) {
+        if (!bandHasResponse(band))
+            return false
+        if (band.shape === 2)
+            return frequency <= band.highHz
+        if (band.shape === 3)
+            return frequency >= band.lowHz
+        return frequency >= band.lowHz
+            && frequency <= band.highHz
+    }
+
+    function combinedResponse(bands, frequency) {
+        let response = 0
+        for (let index = 0; index < bands.length; ++index)
+            response += bandResponse(bands[index], frequency)
+        return Math.max(-24, Math.min(24, response))
+    }
+
     function repaint() {
         grid.requestPaint()
         bandOverlay.requestPaint()
@@ -182,6 +256,24 @@ ColumnLayout {
             Text {
                 text: "Original"
                 color: theme.muted
+                font.family: theme.bodyFamily
+                font.pixelSize: theme.fontSize(10)
+            }
+        }
+
+        RowLayout {
+            spacing: 6
+
+            Rectangle {
+                implicitWidth: 18
+                implicitHeight: 3
+                radius: 2
+                color: theme.warning
+            }
+
+            Text {
+                text: "EQ curve"
+                color: theme.text
                 font.family: theme.bodyFamily
                 font.pixelSize: theme.fontSize(10)
             }
@@ -443,6 +535,15 @@ ColumnLayout {
                         y + theme.fontSize(9) * 0.35)
                 }
 
+                const zeroGainY = yForGain(0)
+                ctx.strokeStyle = theme.hoverBorder
+                ctx.setLineDash([4, 4])
+                ctx.beginPath()
+                ctx.moveTo(plotX, zeroGainY)
+                ctx.lineTo(plotX + plotWidth, zeroGainY)
+                ctx.stroke()
+                ctx.setLineDash([])
+
                 ctx.strokeStyle = theme.hoverBorder
                 ctx.strokeRect(
                     plotX + 0.5,
@@ -509,9 +610,17 @@ ColumnLayout {
                         index < bands.length;
                         ++index) {
                     const band = bands[index]
-                    if (band.highHz < grid.minimumFrequency
-                            || band.lowHz
-                                > grid.maximumFrequency) {
+                    const lowShelfVisible = band.shape === 2
+                        && band.highHz >= grid.minimumFrequency
+                    const highShelfVisible = band.shape === 3
+                        && band.lowHz <= grid.maximumFrequency
+                    const boundedBandVisible = band.shape !== 2
+                        && band.shape !== 3
+                        && band.highHz >= grid.minimumFrequency
+                        && band.lowHz <= grid.maximumFrequency
+                    if (!lowShelfVisible
+                            && !highShelfVisible
+                            && !boundedBandVisible) {
                         continue
                     }
                     const left =
@@ -522,47 +631,119 @@ ColumnLayout {
                         index === root.selectedBand
                     const enabled = band.enabled
                     ctx.fillStyle = selected
-                        ? Qt.rgba(0.96, 0.67, 0.20, 0.18)
+                        ? Qt.rgba(0.96, 0.67, 0.20, 0.12)
                         : Qt.rgba(0.16, 0.52, 0.95,
-                            enabled ? 0.10 : 0.04)
+                            enabled ? 0.07 : 0.025)
                     ctx.fillRect(
                         left,
                         grid.plotY,
                         Math.max(1, right - left),
                         grid.plotHeight)
-                    ctx.strokeStyle = selected
-                        ? theme.warning
-                        : (enabled
-                            ? theme.accent
-                            : theme.quiet)
-                    ctx.lineWidth = selected ? 2 : 1
-                    ctx.strokeRect(
-                        left + 0.5,
-                        grid.plotY + 0.5,
-                        Math.max(1, right - left - 1),
-                        grid.plotHeight - 1)
 
-                    const gainY =
-                        grid.yForGain(band.gainDb)
-                    ctx.beginPath()
-                    ctx.moveTo(left, gainY)
-                    ctx.lineTo(right, gainY)
-                    ctx.stroke()
+                    if (root.bandHasResponse(band)) {
+                        const responseMinimum = band.shape === 2
+                            ? grid.minimumFrequency
+                            : Math.max(
+                                grid.minimumFrequency,
+                                band.lowHz)
+                        const responseMaximum = band.shape === 3
+                            ? grid.maximumFrequency
+                            : Math.min(
+                                grid.maximumFrequency,
+                                band.highHz)
+                        const responseSpan = Math.max(
+                            0,
+                            responseMaximum - responseMinimum)
+                        if (responseSpan > 0) {
+                            const sampleCount = Math.max(
+                                24,
+                                Math.round(
+                                    grid.plotWidth
+                                        * responseSpan
+                                        / grid.frequencySpan
+                                        / 4))
+                            const baselineY = grid.yForGain(0)
+                            const startX = grid.xForFrequency(
+                                responseMinimum)
+                            const endX = grid.xForFrequency(
+                                responseMaximum)
+                            ctx.beginPath()
+                            ctx.moveTo(startX, baselineY)
+                            for (let sample = 0;
+                                    sample <= sampleCount;
+                                    ++sample) {
+                                const fraction =
+                                    sample / sampleCount
+                                const frequency = responseMinimum
+                                    + fraction * responseSpan
+                                ctx.lineTo(
+                                    grid.xForFrequency(frequency),
+                                    grid.yForGain(
+                                        root.bandResponse(
+                                            band, frequency)))
+                            }
+                            ctx.lineTo(endX, baselineY)
+                            ctx.closePath()
+                            ctx.fillStyle = selected
+                                ? Qt.rgba(
+                                    0.96, 0.67, 0.20, 0.10)
+                                : Qt.rgba(
+                                    0.16, 0.52, 0.95, 0.06)
+                            ctx.fill()
+
+                            ctx.beginPath()
+                            for (let sample = 0;
+                                    sample <= sampleCount;
+                                    ++sample) {
+                                const fraction =
+                                    sample / sampleCount
+                                const frequency = responseMinimum
+                                    + fraction * responseSpan
+                                const x = grid.xForFrequency(
+                                    frequency)
+                                const y = grid.yForGain(
+                                    root.bandResponse(
+                                        band, frequency))
+                                if (sample === 0)
+                                    ctx.moveTo(x, y)
+                                else
+                                    ctx.lineTo(x, y)
+                            }
+                            ctx.strokeStyle = selected
+                                ? theme.warning
+                                : theme.accent
+                            ctx.lineWidth = selected ? 2 : 1
+                            ctx.stroke()
+                        }
+                    }
 
                     if (selected) {
+                        const gainY =
+                            grid.yForGain(band.gainDb)
+                        const lowHandleY = grid.yForGain(
+                            band.shape === 0
+                                ? band.gainDb
+                                : root.bandResponse(
+                                    band, band.lowHz))
+                        const highHandleY = grid.yForGain(
+                            band.shape === 0
+                                ? band.gainDb
+                                : root.bandResponse(
+                                    band, band.highHz))
                         ctx.fillStyle = theme.warning
                         ctx.fillRect(
                             left - 3,
-                            gainY - 8,
+                            lowHandleY - 8,
                             6,
                             16)
                         ctx.fillRect(
                             right - 3,
-                            gainY - 8,
+                            highHandleY - 8,
                             6,
                             16)
                         const label =
-                            root.frequencyLabel(band.lowHz)
+                            band.shapeName + "  ·  "
+                            + root.frequencyLabel(band.lowHz)
                             + " – "
                             + root.frequencyLabel(band.highHz)
                             + "  ·  "
@@ -592,6 +773,48 @@ ColumnLayout {
                         ctx.fillText(
                             label, labelX, labelY)
                     }
+                }
+
+                if (bands.length > 0) {
+                    const combinedSamples = Math.max(
+                        100, Math.round(grid.plotWidth / 4))
+                    ctx.beginPath()
+                    let drawing = false
+                    for (let sample = 0;
+                            sample <= combinedSamples;
+                            ++sample) {
+                        const fraction =
+                            sample / combinedSamples
+                        const frequency = grid.minimumFrequency
+                            + fraction * grid.frequencySpan
+                        let affected = false
+                        for (let bandIndex = 0;
+                                bandIndex < bands.length;
+                                ++bandIndex) {
+                            if (root.bandAffectsFrequency(
+                                    bands[bandIndex], frequency)) {
+                                affected = true
+                                break
+                            }
+                        }
+                        if (!affected) {
+                            drawing = false
+                            continue
+                        }
+                        const x = grid.plotX
+                            + fraction * grid.plotWidth
+                        const y = grid.yForGain(
+                            root.combinedResponse(
+                                bands, frequency))
+                        if (!drawing)
+                            ctx.moveTo(x, y)
+                        else
+                            ctx.lineTo(x, y)
+                        drawing = true
+                    }
+                    ctx.strokeStyle = theme.warning
+                    ctx.lineWidth = 2.4
+                    ctx.stroke()
                 }
 
                 if (root.creatingBand) {
@@ -866,7 +1089,7 @@ ColumnLayout {
     Text {
         Layout.fillWidth: true
         text: "Wheel to zoom · Shift/right-drag to pan · "
-            + "bands overlap additively · gain is limited to ±24 dB"
+            + "curves overlap additively · gain is limited to ±24 dB"
         color: theme.muted
         font.family: theme.bodyFamily
         font.pixelSize: theme.fontSize(10)
