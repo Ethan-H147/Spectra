@@ -727,49 +727,25 @@ ApplicationWindow {
                         eqExportDialog.open()
                     }
                 }
-            }
 
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                color: theme.topbar
+                ActivityNotice {
+                    id: activityNotice
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: theme.space3
+                    maximumWidth: Math.min(540, parent.width - theme.space4 * 2)
+                    z: 20
 
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: 1
-                    color: theme.border
-                }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: theme.space2
-                    anchors.rightMargin: theme.space2
-                    spacing: theme.space1
-
-                    Rectangle {
-                        implicitWidth: 8
-                        implicitHeight: 8
-                        radius: 4
-                        color: spectra.audioReady ? theme.success : theme.warning
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: spectra.statusText
-                        color: theme.muted
-                        font.family: theme.bodyFamily
-                        font.pixelSize: theme.fontSize(10.5)
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        text: "44.1 kHz  |  Mono / stereo  |  Local processing"
-                        color: theme.muted
-                        font.family: theme.bodyFamily
-                        font.pixelSize: theme.fontSize(10.5)
-                    }
+                    message: spectra.statusText
+                    busy: spectra.fullFileProcessing
+                        || spectra.effectProcessing
+                        || spectra.eqProcessing
+                    busyMessage: spectra.statusText
+                    progress: spectra.eqProcessing
+                        ? spectra.eqProgress
+                        : (spectra.effectProcessing
+                            ? spectra.effectProgress
+                            : spectra.fullFileProgress)
                 }
             }
         }

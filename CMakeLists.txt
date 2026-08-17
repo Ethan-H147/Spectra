@@ -156,6 +156,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
     set(SPECTRA_QML_FILES
         qml/Main.qml
         qml/Theme.qml
+        qml/components/ActivityNotice.qml
         qml/components/AudioImportBar.qml
         qml/components/AppButton.qml
         qml/components/MetricCard.qml
