@@ -239,6 +239,8 @@ Item {
 
                 Panel {
                     Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.alignment: Qt.AlignTop
                     Layout.minimumHeight: 540
                     title: "Harmonic-only model"
                     subtitle: spectra.harmonicReady
@@ -385,6 +387,8 @@ Item {
 
                 Panel {
                     Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.alignment: Qt.AlignTop
                     Layout.minimumHeight: 540
                     title: "Evolving Fourier model"
                     subtitle: "Tracks change with overlapping short-time FFT frames"

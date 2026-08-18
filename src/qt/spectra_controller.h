@@ -163,6 +163,18 @@ class SpectraController final : public QObject {
     Q_PROPERTY(bool eqPlaying READ eqPlaying NOTIFY playbackChanged)
     Q_PROPERTY(int eqPlaybackSelection READ eqPlaybackSelection NOTIFY playbackChanged)
 
+    Q_PROPERTY(bool instantPreviewProcessing READ instantPreviewProcessing NOTIFY instantPreviewChanged)
+    Q_PROPERTY(bool instantPreviewReady READ instantPreviewReady NOTIFY instantPreviewChanged)
+    Q_PROPERTY(int instantPreviewKind READ instantPreviewKind NOTIFY instantPreviewChanged)
+    Q_PROPERTY(double instantPreviewProgress READ instantPreviewProgress NOTIFY instantPreviewChanged)
+    Q_PROPERTY(double instantPreviewStart READ instantPreviewStart NOTIFY instantPreviewChanged)
+    Q_PROPERTY(double instantPreviewDuration READ instantPreviewDuration NOTIFY instantPreviewChanged)
+    Q_PROPERTY(QString instantPreviewRangeLabel READ instantPreviewRangeLabel NOTIFY instantPreviewChanged)
+    Q_PROPERTY(bool instantPreviewPlaying READ instantPreviewPlaying NOTIFY playbackChanged)
+    Q_PROPERTY(int instantPreviewPlaybackSelection READ instantPreviewPlaybackSelection NOTIFY playbackChanged)
+    Q_PROPERTY(double instantPreviewPlaybackPosition READ instantPreviewPlaybackPosition NOTIFY playbackChanged)
+    Q_PROPERTY(double instantPreviewPlaybackDuration READ instantPreviewPlaybackDuration NOTIFY playbackChanged)
+
 public:
     explicit SpectraController(QObject *parent = nullptr);
     ~SpectraController() override;
@@ -302,6 +314,18 @@ public:
     bool eqPlaying() const;
     int eqPlaybackSelection() const;
 
+    bool instantPreviewProcessing() const;
+    bool instantPreviewReady() const;
+    int instantPreviewKind() const;
+    double instantPreviewProgress() const;
+    double instantPreviewStart() const;
+    double instantPreviewDuration() const;
+    QString instantPreviewRangeLabel() const;
+    bool instantPreviewPlaying() const;
+    int instantPreviewPlaybackSelection() const;
+    double instantPreviewPlaybackPosition() const;
+    double instantPreviewPlaybackDuration() const;
+
     Q_INVOKABLE void setCurrentPage(int page);
     Q_INVOKABLE void setTextScale(double scale);
     Q_INVOKABLE void setPerformanceMode(int mode);
@@ -378,6 +402,14 @@ public:
     Q_INVOKABLE void toggleEqPlayback();
     Q_INVOKABLE void seekEqPlayback(double position);
     Q_INVOKABLE bool exportEqFile(const QUrl &url);
+    Q_INVOKABLE void requestInstantPreview(
+        int kind,
+        bool recenter);
+    Q_INVOKABLE void playInstantPreviewOriginal();
+    Q_INVOKABLE void playInstantPreviewProcessed();
+    Q_INVOKABLE void toggleInstantPreviewPlayback();
+    Q_INVOKABLE void seekInstantPreviewPlayback(
+        double position);
     Q_INVOKABLE void stopPlayback();
     Q_INVOKABLE void importAudioFile(const QUrl &url);
     Q_INVOKABLE bool exportSynthFile(const QUrl &url);
@@ -399,6 +431,7 @@ signals:
     void effectSpectrumChanged();
     void eqChanged();
     void eqSpectrumChanged();
+    void instantPreviewChanged();
     void playbackChanged();
 
 private:
@@ -413,6 +446,14 @@ private:
         FullFilePlayback,
         EffectPlayback,
         EqPlayback,
+        InstantPreviewOriginalPlayback,
+        InstantPreviewProcessedPlayback,
+    };
+
+    enum InstantPreviewKind {
+        NoInstantPreview = 0,
+        EffectInstantPreview = 1,
+        EqInstantPreview = 2,
     };
 
     enum FullFileWork {
@@ -480,6 +521,17 @@ private:
         BackgroundTaskControl *control,
         void *context);
     void processEqWork();
+    void scheduleInstantPreview(
+        InstantPreviewKind kind,
+        bool recenter);
+    void startInstantPreview();
+    void processInstantPreviewWork();
+    static void processInstantPreviewInBackground(
+        BackgroundTaskControl *control,
+        void *context);
+    bool rebuildInstantPreviewSource();
+    double instantPreviewAnchor() const;
+    void clearInstantPreview();
     int requiredGlobalAnalysisComponents() const;
     bool hasReusableGlobalAnalysis() const;
     unsigned int fullFileReconstructionChannels() const;
@@ -616,10 +668,32 @@ private:
     bool eqWorkerSucceeded_ = false;
     bool eqSpectrumPreview_ = false;
 
+    BackgroundTask instantPreviewTask_ = {};
+    InterleavedBuffer instantPreviewSourceBuffer_ = {};
+    InterleavedBuffer instantPreviewWorkerBuffer_ = {};
+    InterleavedBuffer instantPreviewBuffer_ = {};
+    AudioClip instantPreviewOriginalClip_ = {};
+    AudioClip instantPreviewProcessedClip_ = {};
+    std::vector<SpectralEqBand> instantPreviewWorkerBands_;
+    InstantPreviewKind instantPreviewKind_ = NoInstantPreview;
+    InstantPreviewKind instantPreviewPendingKind_ = NoInstantPreview;
+    InstantPreviewKind instantPreviewWorkerKind_ = NoInstantPreview;
+    InstantPreviewKind instantPreviewReadyKind_ = NoInstantPreview;
+    int instantPreviewWorkerEffectMode_ = 0;
+    double instantPreviewWorkerEffectAmount_ = 0.0;
+    double instantPreviewStart_ = 0.0;
+    double instantPreviewDuration_ = 0.0;
+    double instantPreviewProgress_ = 0.0;
+    bool instantPreviewPending_ = false;
+    bool instantPreviewPendingRecenter_ = false;
+    bool instantPreviewWorkerSucceeded_ = false;
+
     PlaybackTarget playbackTarget_ = NoPlayback;
     PlaybackTarget lastFullFilePlaybackTarget_ = SourcePlayback;
     PlaybackTarget lastEffectPlaybackTarget_ = SourcePlayback;
     PlaybackTarget lastEqPlaybackTarget_ = SourcePlayback;
+    PlaybackTarget lastInstantPreviewPlaybackTarget_ =
+        InstantPreviewOriginalPlayback;
     QTimer synthRebuildTimer_;
     QTimer playbackTimer_;
     QTimer importTimer_;
@@ -627,6 +701,8 @@ private:
     QTimer effectTimer_;
     QTimer effectSpectrumTimer_;
     QTimer eqTimer_;
+    QTimer instantPreviewDebounceTimer_;
+    QTimer instantPreviewTimer_;
 };
 
 #endif

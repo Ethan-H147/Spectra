@@ -20,10 +20,13 @@ Item {
         ? Math.max(10, Math.min(5000, spectra.sourceSampleRate / 2))
         : 5000
     readonly property string stateLabel: spectra.effectProcessing
-        ? "Processing  " + Math.round(spectra.effectProgress * 100) + "%"
+        ? "Building full track  "
+            + Math.round(spectra.effectProgress * 100) + "%"
         : (spectra.effectReady
-            ? "Output ready"
-            : (spectra.sourceLoaded ? "Ready to build" : "Import audio"))
+            ? "Full track ready"
+            : (spectra.sourceLoaded
+                ? "Full track not built"
+                : "Import audio"))
     readonly property color stateColor: spectra.effectProcessing
         ? theme.accent
         : (spectra.effectReady
@@ -317,42 +320,6 @@ Item {
                     }
                 }
 
-                ProgressBar {
-                    Layout.fillWidth: true
-                    visible: spectra.effectProcessing
-                    from: 0
-                    to: 1
-                    value: spectra.effectProgress
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: theme.space1
-
-                    AppButton {
-                        Layout.fillWidth: true
-                        text: spectra.effectProcessing
-                            ? "Processing…"
-                            : (spectra.effectReady
-                                ? "Rebuild output"
-                                : "Build output")
-                        enabled: spectra.sourceLoaded
-                                 && !spectra.effectProcessing
-                        accentColor: theme.accent
-                        onClicked: spectra.buildEffect()
-                    }
-
-                    AppButton {
-                        Layout.fillWidth: true
-                        text: "Export WAV"
-                        quiet: true
-                        enabled: spectra.effectReady
-                            && !spectra.effectProcessing
-                        onClicked:
-                            root.exportEffectRequested()
-                    }
-                }
-
                 Rectangle {
                     id: spectrumPreviewCard
 
@@ -425,7 +392,7 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.preferredWidth: 520
-            title: "Preview & compare"
+            title: "Listen & export"
             subtitle: spectra.sourceLoaded
                 ? spectra.sourceFileName
                 : "No source loaded"
@@ -435,12 +402,10 @@ Item {
                 Layout.fillHeight: true
                 spacing: theme.space2
 
-                StatusRow {
+                InstantRegionPreview {
                     Layout.fillWidth: true
-                    interactive: false
-                    label: "Effect state"
-                    value: root.stateLabel
-                    stateColor: root.stateColor
+                    previewKind: 1
+                    processedLabel: spectra.effectModeName
                 }
 
                 GridLayout {
@@ -524,7 +489,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Listen to"
+                    text: "Full track"
                     color: theme.text
                     font.family: theme.headingFamily
                     font.pixelSize: theme.fontSize(13)
@@ -535,51 +500,116 @@ Item {
                     Layout.fillWidth: true
                     spacing: theme.space1
 
-                    AppButton {
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        compact: true
-                        text: "Original"
-                        selected:
-                            spectra.effectPlaybackSelection === 0
-                        enabled: spectra.sourceLoaded
-                        onClicked: spectra.playEffectOriginal()
+                        spacing: 2
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.stateLabel
+                            color: root.stateColor
+                            font.family: theme.headingFamily
+                            font.pixelSize: theme.fontSize(10)
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: spectra.effectReady
+                                ? "Listen through or export the rendered track"
+                                : "Build only when you want the entire track"
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(10)
+                            elide: Text.ElideRight
+                        }
                     }
 
                     AppButton {
-                        Layout.fillWidth: true
-                        compact: true
-                        text: "Processed"
-                        selected:
-                            spectra.effectPlaybackSelection === 1
+                        text: spectra.effectProcessing
+                            ? "Building  "
+                                + Math.round(
+                                    spectra.effectProgress * 100)
+                                + "%"
+                            : (spectra.effectReady
+                                ? "Rebuild full track"
+                                : "Build full track")
+                        enabled: spectra.sourceLoaded
+                            && !spectra.effectProcessing
+                        accentColor: theme.accent
+                        onClicked: spectra.buildEffect()
+                    }
+
+                    AppButton {
+                        text: "Export WAV"
+                        quiet: true
                         enabled: spectra.effectReady
+                            && !spectra.effectProcessing
                         onClicked:
-                            spectra.playEffectProcessed()
+                            root.exportEffectRequested()
                     }
                 }
 
-                TransportPlayer {
+                ProgressBar {
                     Layout.fillWidth: true
-                    enabled: spectra.sourceLoaded
-                        && (spectra.effectPlaybackSelection === 0
-                            || spectra.effectReady)
-                    title:
-                        spectra.effectPlaybackSelection === 0
-                            ? "Original full file"
-                            : spectra.effectModeName
-                                + " output"
-                    playing: spectra.effectPlaying
-                    position: spectra.playbackPosition
-                    duration: spectra.playbackDuration > 0
-                        ? spectra.playbackDuration
-                        : (spectra.effectPlaybackSelection === 1
-                            && spectra.effectReady
-                            ? spectra.effectOutputDuration
-                            : spectra.sourceDuration)
-                    onToggleRequested:
-                        spectra.toggleEffectPlayback()
-                    onStopRequested: spectra.stopPlayback()
-                    onSeekRequested: function(position) {
-                        spectra.seekEffectPlayback(position)
+                    visible: spectra.effectProcessing
+                    from: 0
+                    to: 1
+                    value: spectra.effectProgress
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: spectra.effectReady
+                    spacing: theme.space1
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: theme.space1
+
+                        AppButton {
+                            Layout.fillWidth: true
+                            compact: true
+                            text: "Original track"
+                            selected:
+                                spectra.effectPlaybackSelection === 0
+                            onClicked: spectra.playEffectOriginal()
+                        }
+
+                        AppButton {
+                            Layout.fillWidth: true
+                            compact: true
+                            text: "Rendered track"
+                            selected:
+                                spectra.effectPlaybackSelection === 1
+                            onClicked:
+                                spectra.playEffectProcessed()
+                        }
+                    }
+
+                    TransportPlayer {
+                        Layout.fillWidth: true
+                        title:
+                            spectra.effectPlaybackSelection === 0
+                                ? "Original full track"
+                                : spectra.effectModeName
+                                    + " · full track"
+                        playing: spectra.effectPlaying
+                        position: spectra.effectPlaying
+                            ? spectra.playbackPosition
+                            : 0
+                        duration: spectra.playbackDuration > 0
+                            ? spectra.playbackDuration
+                            : (spectra.effectPlaybackSelection === 1
+                                ? spectra.effectOutputDuration
+                                : spectra.sourceDuration)
+                        onToggleRequested:
+                            spectra.toggleEffectPlayback()
+                        onStopRequested: spectra.stopPlayback()
+                        onSeekRequested: function(position) {
+                            spectra.seekEffectPlayback(position)
+                        }
                     }
                 }
 

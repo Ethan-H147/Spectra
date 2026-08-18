@@ -140,6 +140,13 @@ bool audio_clip_set_samples(AudioClip *clip, const SampleBuffer *buffer) {
     return audio_clip_set_interleaved(clip, &interleaved);
 }
 
+void audio_clip_set_looping(AudioClip *clip, bool looping) {
+    if (clip == NULL || !clip->loaded) {
+        return;
+    }
+    clip->music.looping = looping;
+}
+
 bool audio_clip_play(AudioClip *clip) {
     if (clip == NULL || !clip->loaded) {
         return false;

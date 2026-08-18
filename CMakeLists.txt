@@ -159,6 +159,7 @@ if(SPECTRA_BUILD_QT_FRONTEND)
         qml/components/ActivityNotice.qml
         qml/components/AudioImportBar.qml
         qml/components/AppButton.qml
+        qml/components/InstantRegionPreview.qml
         qml/components/MetricCard.qml
         qml/components/Panel.qml
         qml/components/SegmentedSwitch.qml

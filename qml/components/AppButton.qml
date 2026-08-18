@@ -95,7 +95,7 @@ Button {
             visible: control.selected
         }
 
-        scale: control.down ? 0.98 : 1.0
+        scale: control.down ? 0.97 : 1.0
         Behavior on scale {
             NumberAnimation {
                 duration: 120

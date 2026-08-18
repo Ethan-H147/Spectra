@@ -121,18 +121,42 @@ Item {
             elide: Text.ElideRight
         }
 
-        indicator: Text {
+        indicator: Item {
             x: presetControl.width - width - 13
             y: Math.round(
                 (presetControl.height - height) / 2)
-            text: "⌄"
-            color: presetControl.enabled
-                ? theme.muted
-                : theme.quiet
-            font.family: "Segoe UI Symbol"
-            font.pixelSize: theme.fontSize(18)
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+            implicitWidth: 18
+            implicitHeight: 18
+
+            Canvas {
+                id: presetChevron
+
+                anchors.fill: parent
+                property color strokeColor:
+                    presetControl.enabled
+                        ? theme.muted
+                        : theme.quiet
+
+                onPaint: {
+                    const ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    const centerX = width * 0.5
+                    const centerY = height * 0.5
+                    ctx.strokeStyle = strokeColor
+                    ctx.lineWidth = 1.6
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+                    ctx.beginPath()
+                    ctx.moveTo(centerX - 5, centerY - 2.5)
+                    ctx.lineTo(centerX, centerY + 2.5)
+                    ctx.lineTo(centerX + 5, centerY - 2.5)
+                    ctx.stroke()
+                }
+
+                onStrokeColorChanged: requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+            }
         }
 
         background: Rectangle {
@@ -221,7 +245,7 @@ Item {
         }
     }
 
-    readonly property bool compact: width < 1050
+    readonly property bool compact: pageScroll.width < 1050
     readonly property var presetDescriptions: [
         "No tonal change",
         "Subtle shelves with restrained midrange shaping",
@@ -238,13 +262,13 @@ Item {
     ]
     readonly property string stateLabel:
         spectra.eqProcessing
-            ? "Processing  "
+            ? "Building full track  "
                 + Math.round(
                     spectra.eqProgress * 100) + "%"
             : (spectra.eqReady
-                ? "Output ready"
+                ? "Full track ready"
                 : (spectra.sourceLoaded
-                    ? "Ready to build"
+                    ? "Full track not built"
                     : "Import audio"))
     readonly property color stateColor:
         spectra.eqProcessing
@@ -272,9 +296,31 @@ Item {
         }
     }
 
-    ColumnLayout {
+    Flickable {
+        id: pageScroll
+
         anchors.fill: parent
-        spacing: theme.space2
+        clip: true
+        contentWidth: width
+        contentHeight: pageLayout.height
+        flickableDirection: Flickable.VerticalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        acceptedButtons: Qt.NoButton
+
+        ScrollBar.vertical: ScrollBar {
+            id: pageScrollBar
+
+            policy: ScrollBar.AsNeeded
+        }
+
+        ColumnLayout {
+            id: pageLayout
+
+            width: pageScroll.width - pageScrollBar.width
+            height: Math.max(
+                implicitHeight,
+                pageScroll.height)
+            spacing: theme.space2
 
         RowLayout {
             Layout.fillWidth: true
@@ -329,15 +375,18 @@ Item {
             }
         }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: theme.space2
+            columns: root.compact ? 1 : 2
+            columnSpacing: theme.space2
+            rowSpacing: theme.space2
 
             Panel {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumWidth: 560
+                Layout.minimumWidth:
+                    root.compact ? 0 : 560
                 title: "Interactive spectrum"
                 subtitle: spectra.sourceLoaded
                     ? "Drag empty space horizontally to add a Range band"
@@ -354,9 +403,12 @@ Item {
             Panel {
                 id: bandPanel
 
+                Layout.fillWidth: root.compact
                 Layout.preferredWidth:
                     root.compact ? 320 : 360
                 Layout.fillHeight: true
+                Layout.minimumHeight:
+                    root.compact ? 320 : 0
                 title: "Bands"
                 subtitle: spectra.eqBandCount
                     + (spectra.eqBandCount === 1
@@ -675,52 +727,86 @@ Item {
 
         Panel {
             Layout.fillWidth: true
-            title: "Build & compare"
-            subtitle: "The graph updates instantly; Build output measures the rendered full track"
+            title: "Listen & export"
+            subtitle: "Preview edits live, then build the full track when you’re ready"
 
-            RowLayout {
+            ColumnLayout {
                 Layout.fillWidth: true
-                spacing: theme.space2
+                spacing: theme.space1
 
-                StatusRow {
-                    Layout.preferredWidth: 260
-                    interactive: false
-                    label: "EQ state"
-                    value: root.stateLabel
-                    stateColor: root.stateColor
+                InstantRegionPreview {
+                    Layout.fillWidth: true
+                    previewKind: 2
+                    processedLabel: "Range EQ"
                 }
 
-                AppButton {
-                    Layout.preferredWidth: 190
-                    text: spectra.eqProcessing
-                        ? "Building  "
-                            + Math.round(
-                                spectra.eqProgress * 100)
-                            + "%"
-                        : "Build output"
-                    enabled: spectra.sourceLoaded
-                             && !spectra.eqProcessing
-                    accentColor: theme.accent
-                    onClicked: spectra.buildEq()
+                Text {
+                    Layout.fillWidth: true
+                    text: "Full track"
+                    color: theme.text
+                    font.family: theme.headingFamily
+                    font.pixelSize: theme.fontSize(12)
+                    font.weight: Font.DemiBold
                 }
 
-                AppButton {
-                    Layout.preferredWidth: 150
-                    text: "Export WAV"
-                    quiet: true
-                    enabled: spectra.eqReady
-                        && !spectra.eqProcessing
-                    onClicked: root.exportEqRequested()
-                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: theme.space1
 
-                Rectangle {
-                    Layout.preferredWidth: 1
-                    Layout.fillHeight: true
-                    color: theme.border
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.stateLabel
+                            color: root.stateColor
+                            font.family: theme.headingFamily
+                            font.pixelSize: theme.fontSize(10)
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: spectra.eqReady
+                                ? "Listen through or export the rendered track"
+                                : "Build only when you want the entire track"
+                            color: theme.muted
+                            font.family: theme.bodyFamily
+                            font.pixelSize: theme.fontSize(10)
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    AppButton {
+                        text: spectra.eqProcessing
+                            ? "Building  "
+                                + Math.round(
+                                    spectra.eqProgress * 100)
+                                + "%"
+                            : (spectra.eqReady
+                                ? "Rebuild full track"
+                                : "Build full track")
+                        enabled: spectra.sourceLoaded
+                                 && !spectra.eqProcessing
+                        accentColor: theme.accent
+                        onClicked: spectra.buildEq()
+                    }
+
+                    AppButton {
+                        text: "Export WAV"
+                        quiet: true
+                        enabled: spectra.eqReady
+                            && !spectra.eqProcessing
+                        onClicked: root.exportEqRequested()
+                    }
+
                 }
 
                 ColumnLayout {
                     Layout.fillWidth: true
+                    visible: spectra.eqReady
                     spacing: theme.space1
 
                     RowLayout {
@@ -729,38 +815,34 @@ Item {
 
                         AppButton {
                             Layout.fillWidth: true
-                            text: "Original"
-                            quiet:
-                                spectra.eqPlaybackSelection !== 0
-                            enabled: spectra.sourceLoaded
+                            text: "Original track"
+                            selected:
+                                spectra.eqPlaybackSelection === 0
                             onClicked: spectra.playEqOriginal()
                         }
 
                         AppButton {
                             Layout.fillWidth: true
-                            text: "Processed"
-                            quiet:
-                                spectra.eqPlaybackSelection !== 1
-                            enabled: spectra.eqReady
+                            text: "Rendered track"
+                            selected:
+                                spectra.eqPlaybackSelection === 1
                             onClicked: spectra.playEqProcessed()
                         }
                     }
 
                     TransportPlayer {
                         Layout.fillWidth: true
-                        enabled: spectra.sourceLoaded
-                            && (spectra.eqPlaybackSelection === 0
-                                || spectra.eqReady)
                         title:
                             spectra.eqPlaybackSelection === 0
-                                ? "Original full file"
-                                : "Range EQ output"
+                                ? "Original full track"
+                                : "Range EQ · full track"
                         playing: spectra.eqPlaying
-                        position: spectra.playbackPosition
+                        position: spectra.eqPlaying
+                            ? spectra.playbackPosition
+                            : 0
                         duration: spectra.playbackDuration > 0
                             ? spectra.playbackDuration
                             : (spectra.eqPlaybackSelection === 1
-                                && spectra.eqReady
                                 ? spectra.eqOutputDuration
                                 : spectra.sourceDuration)
                         onToggleRequested:
@@ -772,6 +854,7 @@ Item {
                     }
                 }
             }
+        }
         }
     }
 }

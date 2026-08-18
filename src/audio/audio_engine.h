@@ -19,6 +19,7 @@ void audio_clip_init(AudioClip *clip);
 bool audio_clip_set_interleaved(AudioClip *clip,
                                 const InterleavedBuffer *buffer);
 bool audio_clip_set_samples(AudioClip *clip, const SampleBuffer *buffer);
+void audio_clip_set_looping(AudioClip *clip, bool looping);
 bool audio_clip_play(AudioClip *clip);
 bool audio_clip_pause(AudioClip *clip);
 bool audio_clip_resume(AudioClip *clip);

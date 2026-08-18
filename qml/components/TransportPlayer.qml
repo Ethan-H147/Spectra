@@ -101,7 +101,7 @@ Rectangle {
                 : (playerButton.primary
                     ? theme.accent
                     : theme.border)
-            scale: playerButton.down ? 0.96 : 1
+            scale: playerButton.down ? 0.97 : 1
 
             Behavior on scale {
                 NumberAnimation {
