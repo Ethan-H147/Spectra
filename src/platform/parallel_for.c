@@ -22,6 +22,7 @@ typedef struct {
 #else
     pthread_t thread;
     bool started;
+    bool stopping;
 #endif
 } ParallelWorker;
 
@@ -81,12 +82,10 @@ unsigned int spectra_hardware_thread_count(void) {
         return cached_count;
     }
 #if defined(_WIN32)
-    SYSTEM_INFO information;
-    GetSystemInfo(&information);
-    cached_count =
-        information.dwNumberOfProcessors > 0U
-            ? (unsigned int)information.dwNumberOfProcessors
-            : 1U;
+    /* Counts processors in every group, not only the first 64. */
+    const DWORD count =
+        GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    cached_count = count > 0U ? (unsigned int)count : 1U;
 #else
     const long count = sysconf(_SC_NPROCESSORS_ONLN);
     cached_count = count > 0L ? (unsigned int)count : 1U;
@@ -178,6 +177,254 @@ static void *worker_entry(void *context) {
 }
 #endif
 
+/* Runs worker 0 on the calling thread and the rest on short-lived threads.
+ * Used when the shared pool is already serving another caller. */
+static void run_with_new_threads(
+    ParallelWorker *workers,
+    unsigned int worker_count) {
+    for (unsigned int index = 1U;
+         index < worker_count;
+         ++index) {
+#if defined(_WIN32)
+        workers[index].thread = CreateThread(
+            NULL,
+            0U,
+            worker_entry,
+            &workers[index],
+            0U,
+            NULL);
+#else
+        workers[index].started =
+            pthread_create(
+                &workers[index].thread,
+                NULL,
+                worker_entry,
+                &workers[index]) == 0;
+#endif
+    }
+
+    run_worker(&workers[0]);
+    for (unsigned int index = 1U;
+         index < worker_count;
+         ++index) {
+#if defined(_WIN32)
+        if (workers[index].thread == NULL) {
+            run_worker(&workers[index]);
+            continue;
+        }
+        WaitForSingleObject(workers[index].thread, INFINITE);
+        CloseHandle(workers[index].thread);
+#else
+        if (!workers[index].started) {
+            run_worker(&workers[index]);
+            continue;
+        }
+        pthread_join(workers[index].thread, NULL);
+#endif
+    }
+}
+
+/*
+ * A process-wide pool of persistent worker threads, started on first use.
+ * One caller at a time owns the pool; the caller always runs worker 0 itself
+ * and then helps claim any task the pool threads have not started.
+ */
+#define POOL_MAXIMUM_THREADS 63U
+
+typedef struct {
+#if defined(_WIN32)
+    SRWLOCK lock;
+    CONDITION_VARIABLE work_available;
+    CONDITION_VARIABLE work_finished;
+#else
+    pthread_mutex_t lock;
+    pthread_cond_t work_available;
+    pthread_cond_t work_finished;
+#endif
+    bool started;
+    bool stopping;
+    bool busy;
+    unsigned int thread_count;
+    ParallelWorker *tasks;
+    unsigned int task_count;
+    unsigned int next_task;
+    unsigned int pending_tasks;
+} WorkerPool;
+
+#if defined(_WIN32)
+static WorkerPool worker_pool = {
+    .lock = SRWLOCK_INIT,
+    .work_available = CONDITION_VARIABLE_INIT,
+    .work_finished = CONDITION_VARIABLE_INIT,
+};
+#else
+static WorkerPool worker_pool = {
+    .lock = PTHREAD_MUTEX_INITIALIZER,
+    .work_available = PTHREAD_COND_INITIALIZER,
+    .work_finished = PTHREAD_COND_INITIALIZER,
+};
+#endif
+
+static void pool_lock(void) {
+#if defined(_WIN32)
+    AcquireSRWLockExclusive(&worker_pool.lock);
+#else
+    pthread_mutex_lock(&worker_pool.lock);
+#endif
+}
+
+static void pool_unlock(void) {
+#if defined(_WIN32)
+    ReleaseSRWLockExclusive(&worker_pool.lock);
+#else
+    pthread_mutex_unlock(&worker_pool.lock);
+#endif
+}
+
+static void pool_wait(bool for_work) {
+#if defined(_WIN32)
+    SleepConditionVariableSRW(
+        for_work ? &worker_pool.work_available
+                 : &worker_pool.work_finished,
+        &worker_pool.lock,
+        INFINITE,
+        0U);
+#else
+    pthread_cond_wait(
+        for_work ? &worker_pool.work_available
+                 : &worker_pool.work_finished,
+        &worker_pool.lock);
+#endif
+}
+
+static void pool_wake_workers(void) {
+#if defined(_WIN32)
+    WakeAllConditionVariable(&worker_pool.work_available);
+#else
+    pthread_cond_broadcast(&worker_pool.work_available);
+#endif
+}
+
+static void pool_wake_owner(void) {
+#if defined(_WIN32)
+    WakeAllConditionVariable(&worker_pool.work_finished);
+#else
+    pthread_cond_broadcast(&worker_pool.work_finished);
+#endif
+}
+
+/* Claims and runs one unstarted task. Called with the lock held; returns
+ * with the lock held. */
+static bool pool_run_next_task(void) {
+    if (!worker_pool.busy ||
+        worker_pool.next_task >= worker_pool.task_count) {
+        return false;
+    }
+    ParallelWorker *task =
+        &worker_pool.tasks[worker_pool.next_task];
+    ++worker_pool.next_task;
+    pool_unlock();
+    run_worker(task);
+    pool_lock();
+    --worker_pool.pending_tasks;
+    if (worker_pool.pending_tasks == 0U) {
+        pool_wake_owner();
+    }
+    return true;
+}
+
+static void pool_thread_loop(void) {
+    pool_lock();
+    while (!worker_pool.stopping) {
+        if (!pool_run_next_task()) {
+            pool_wait(true);
+        }
+    }
+    pool_unlock();
+}
+
+#if defined(_WIN32)
+static DWORD WINAPI pool_thread_entry(void *context) {
+    (void)context;
+    pool_thread_loop();
+    return 0U;
+}
+#else
+static void *pool_thread_entry(void *context) {
+    (void)context;
+    pool_thread_loop();
+    return NULL;
+}
+#endif
+
+/* Called with the lock held. */
+static void pool_start_threads(void) {
+    if (worker_pool.started) {
+        return;
+    }
+    worker_pool.started = true;
+    const unsigned int hardware = spectra_hardware_thread_count();
+    unsigned int wanted = hardware > 1U ? hardware - 1U : 0U;
+    if (wanted > POOL_MAXIMUM_THREADS) {
+        wanted = POOL_MAXIMUM_THREADS;
+    }
+    for (unsigned int index = 0U; index < wanted; ++index) {
+#if defined(_WIN32)
+        HANDLE thread = CreateThread(
+            NULL, 0U, pool_thread_entry, NULL, 0U, NULL);
+        if (thread == NULL) {
+            break;
+        }
+        CloseHandle(thread);
+#else
+        pthread_t thread;
+        if (pthread_create(
+                &thread, NULL, pool_thread_entry, NULL) != 0) {
+            break;
+        }
+        pthread_detach(thread);
+#endif
+        ++worker_pool.thread_count;
+    }
+}
+
+static bool run_on_pool(
+    ParallelWorker *workers,
+    unsigned int worker_count) {
+    pool_lock();
+    if (worker_pool.busy) {
+        pool_unlock();
+        return false;
+    }
+    pool_start_threads();
+    if (worker_pool.thread_count == 0U) {
+        pool_unlock();
+        return false;
+    }
+    worker_pool.busy = true;
+    worker_pool.tasks = workers;
+    worker_pool.task_count = worker_count;
+    worker_pool.next_task = 1U;
+    worker_pool.pending_tasks = worker_count - 1U;
+    pool_wake_workers();
+    pool_unlock();
+
+    run_worker(&workers[0]);
+
+    pool_lock();
+    while (pool_run_next_task()) {
+    }
+    while (worker_pool.pending_tasks > 0U) {
+        pool_wait(false);
+    }
+    worker_pool.busy = false;
+    worker_pool.tasks = NULL;
+    worker_pool.task_count = 0U;
+    worker_pool.next_task = 0U;
+    pool_unlock();
+    return true;
+}
+
 bool spectra_parallel_for(
     size_t item_count,
     size_t minimum_items_per_worker,
@@ -246,45 +493,8 @@ bool spectra_parallel_for_limited(
         begin += count;
     }
 
-    for (unsigned int index = 1U;
-         index < worker_count;
-         ++index) {
-#if defined(_WIN32)
-        workers[index].thread = CreateThread(
-            NULL,
-            0U,
-            worker_entry,
-            &workers[index],
-            0U,
-            NULL);
-#else
-        workers[index].started =
-            pthread_create(
-                &workers[index].thread,
-                NULL,
-                worker_entry,
-                &workers[index]) == 0;
-#endif
-    }
-
-    run_worker(&workers[0]);
-    for (unsigned int index = 1U;
-         index < worker_count;
-         ++index) {
-#if defined(_WIN32)
-        if (workers[index].thread == NULL) {
-            run_worker(&workers[index]);
-            continue;
-        }
-        WaitForSingleObject(workers[index].thread, INFINITE);
-        CloseHandle(workers[index].thread);
-#else
-        if (!workers[index].started) {
-            run_worker(&workers[index]);
-            continue;
-        }
-        pthread_join(workers[index].thread, NULL);
-#endif
+    if (!run_on_pool(workers, worker_count)) {
+        run_with_new_threads(workers, worker_count);
     }
 
     free(workers);

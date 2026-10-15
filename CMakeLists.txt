@@ -101,45 +101,69 @@ if(SPECTRA_BUILD_QT_FRONTEND)
 
     qt_standard_project_setup(REQUIRES 6.8)
 
-    qt_add_executable(
-        spectra_qt
-        WIN32
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/main.cpp"
+    set(SPECTRA_QT_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/controller_support.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller_analysis.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller_effects.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller_eq.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller_harmonic_lab.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller_instant_preview.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller_spectrogram.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectra_controller_synth.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrogram_pdf_export.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrogram_pdf_export.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_item.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_item.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_lod.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/spectrum_lod.h"
-        ${SPECTRA_CORE_SOURCES}
     )
 
+    # The controller, rendering items, and C core, shared by the application
+    # and the controller integration tests.
+    qt_add_library(
+        spectra_app
+        STATIC
+        ${SPECTRA_QT_SOURCES}
+        ${SPECTRA_CORE_SOURCES}
+    )
     target_include_directories(
-        spectra_qt
-        PRIVATE
+        spectra_app
+        PUBLIC
             "${CMAKE_CURRENT_SOURCE_DIR}/src"
     )
     target_link_libraries(
-        spectra_qt
-        PRIVATE
+        spectra_app
+        PUBLIC
             Qt6::Core
             Qt6::Gui
             Qt6::Qml
             Qt6::Quick
-            Qt6::QuickControls2
             raylib
             Threads::Threads
     )
     target_compile_definitions(
-        spectra_qt
-        PRIVATE
+        spectra_app
+        PUBLIC
             SPECTRA_VERSION="${PROJECT_VERSION}"
             SPECTRA_BUILD_COMMIT="${SPECTRA_BUILD_COMMIT}"
     )
+    spectra_enable_warnings(spectra_app)
+    spectra_link_platform(spectra_app)
+
+    qt_add_executable(
+        spectra_qt
+        WIN32
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/qt/main.cpp"
+    )
+    target_link_libraries(
+        spectra_qt
+        PRIVATE
+            spectra_app
+            Qt6::QuickControls2
+    )
     spectra_enable_warnings(spectra_qt)
-    spectra_link_platform(spectra_qt)
 
     if(MSVC)
         target_link_options(spectra_qt PRIVATE /MANIFEST:NO)
@@ -328,6 +352,21 @@ if(SPECTRA_BUILD_QT_FRONTEND)
             Qt6::Gui
     )
     spectra_enable_warnings(spectrogram_pdf_tests)
+
+    add_executable(
+        controller_tests
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/controller_tests.cpp"
+    )
+    target_link_libraries(controller_tests PRIVATE spectra_app)
+    spectra_enable_warnings(controller_tests)
+    # Runs beside spectra_qt so it uses the Qt runtime and QML modules that
+    # the application build deploys.
+    set_target_properties(
+        controller_tests
+        PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:spectra_qt>"
+    )
+    add_dependencies(controller_tests spectra_qt)
 endif()
 
 file(
@@ -425,4 +464,7 @@ add_test(NAME runtime_tests COMMAND runtime_tests)
 add_test(NAME spectrum_lod_tests COMMAND spectrum_lod_tests)
 if(TARGET spectrogram_pdf_tests)
     add_test(NAME spectrogram_pdf_tests COMMAND spectrogram_pdf_tests)
+endif()
+if(TARGET controller_tests)
+    add_test(NAME controller_tests COMMAND controller_tests)
 endif()

@@ -1,6 +1,7 @@
 #include "dsp/additive_synth.h"
 #include "dsp/channel_mix.h"
 #include "dsp/fft.h"
+#include "dsp/fft_plan.h"
 #include "dsp/fourier_reconstruction.h"
 #include "dsp/global_fourier_reconstruction.h"
 #include "dsp/harmonic_analysis.h"
@@ -370,6 +371,88 @@ static int test_phase_vocoder_pitch_shift(void) {
             440.0f) < 4.0f,
         "a one-octave phase-vocoder shift should double the dominant frequency");
     interleaved_buffer_free(&shifted);
+    return 0;
+}
+
+static int test_chunked_phase_vocoder_is_seamless(void) {
+    const unsigned int sample_rate = 8000U;
+    const size_t frame_count = 200000U;
+    const unsigned int channel_count = 2U;
+    float *samples = (float *)calloc(
+        frame_count * channel_count, sizeof(float));
+    ASSERT_TRUE(samples != NULL,
+                "chunked phase-vocoder test should allocate audio");
+    for (size_t frame = 0U; frame < frame_count; ++frame) {
+        const double time = (double)frame / (double)sample_rate;
+        samples[frame * channel_count] =
+            (float)(0.5 * sin(2.0 * M_PI * 220.0 * time));
+        samples[frame * channel_count + 1U] =
+            (float)(0.4 * sin(2.0 * M_PI * 1234.5 * time));
+    }
+    const InterleavedBuffer source = {
+        .samples = samples,
+        .frame_count = frame_count,
+        .sample_rate = sample_rate,
+        .channel_count = channel_count,
+    };
+    InterleavedBuffer serial = {0};
+    InterleavedBuffer parallel = {0};
+
+    spectra_set_parallel_thread_limit(1U);
+    const bool serial_ok = phase_vocoder_pitch_shift(
+        &source, 1.5f, 1024U, 256U, &serial, NULL, NULL);
+    spectra_set_parallel_thread_limit(0U);
+    const bool parallel_ok = phase_vocoder_pitch_shift(
+        &source, 1.5f, 1024U, 256U, &parallel, NULL, NULL);
+    ASSERT_TRUE(serial_ok && parallel_ok,
+                "multi-chunk pitch shifting should succeed");
+    const size_t sample_count = frame_count * channel_count;
+    for (size_t index = 0U; index < sample_count; ++index) {
+        ASSERT_TRUE(
+            serial.samples[index] == parallel.samples[index],
+            "multi-chunk pitch shifting should not depend on the worker count");
+    }
+
+    /* A steady tone must stay steady across every chunk boundary. */
+    const size_t block = 512U;
+    for (unsigned int channel = 0U; channel < channel_count; ++channel) {
+        const float expected_rms =
+            (channel == 0U ? 0.5f : 0.4f) / sqrtf(2.0f);
+        for (size_t start = 4096U;
+             start + block < frame_count - 4096U;
+             start += block) {
+            double energy = 0.0;
+            for (size_t frame = start; frame < start + block; ++frame) {
+                const double value =
+                    parallel.samples[frame * channel_count + channel];
+                energy += value * value;
+            }
+            const float rms = (float)sqrt(energy / (double)block);
+            ASSERT_TRUE(
+                fabsf(rms - expected_rms) < 0.1f * expected_rms,
+                "pitch-shifted tone level should stay steady across chunks");
+        }
+    }
+
+    InterleavedBuffer left = {
+        .samples = (float *)calloc(frame_count, sizeof(float)),
+        .frame_count = frame_count,
+        .sample_rate = sample_rate,
+        .channel_count = 1U,
+    };
+    ASSERT_TRUE(left.samples != NULL,
+                "chunked phase-vocoder test should allocate a channel");
+    for (size_t frame = 0U; frame < frame_count; ++frame) {
+        left.samples[frame] = parallel.samples[frame * channel_count];
+    }
+    ASSERT_TRUE(
+        fabsf(dominant_interleaved_frequency(&left) - 330.0f) < 4.0f,
+        "a multi-chunk fifth shift should move 220 Hz to 330 Hz");
+
+    free(left.samples);
+    interleaved_buffer_free(&serial);
+    interleaved_buffer_free(&parallel);
+    free(samples);
     return 0;
 }
 
@@ -1346,11 +1429,140 @@ static int test_stft_memory_policy(void) {
     return 0;
 }
 
+static int test_fft_plan_matches_direct_dft(void) {
+    const unsigned int sizes[] = {2U, 4U, 8U, 64U, 1024U};
+    for (size_t size_index = 0U;
+         size_index < sizeof(sizes) / sizeof(sizes[0]);
+         ++size_index) {
+        const unsigned int size = sizes[size_index];
+        float *input = (float *)calloc(size, sizeof(float));
+        float *real = (float *)calloc(size, sizeof(float));
+        float *imaginary = (float *)calloc(size, sizeof(float));
+        float *packed_real = (float *)calloc(size, sizeof(float));
+        float *packed_imaginary = (float *)calloc(size, sizeof(float));
+        SpectraFftPlan plan = {0};
+        ASSERT_TRUE(
+            input != NULL && real != NULL && imaginary != NULL &&
+                packed_real != NULL && packed_imaginary != NULL &&
+                spectra_fft_plan_init(&plan, size),
+            "FFT test should allocate buffers and a plan");
+
+        double peak = 0.0;
+        for (unsigned int index = 0U; index < size; ++index) {
+            input[index] =
+                0.7f * sinf(0.37f * (float)index) +
+                0.2f * cosf(1.91f * (float)index + 0.4f) +
+                (float)(index % 5U) * 0.03f;
+            real[index] = input[index];
+            packed_real[index] = input[index];
+            packed_imaginary[index] = 123.0f;
+            peak += fabs((double)input[index]);
+        }
+        spectra_fft_forward(&plan, real, imaginary);
+        spectra_fft_forward_real(
+            &plan, packed_real, packed_imaginary);
+
+        const double tolerance = 2.0e-5 * peak + 1.0e-5;
+        for (unsigned int bin = 0U; bin < size; ++bin) {
+            double expected_real = 0.0;
+            double expected_imaginary = 0.0;
+            for (unsigned int index = 0U; index < size; ++index) {
+                const double angle =
+                    -2.0 * M_PI * (double)bin * (double)index /
+                    (double)size;
+                expected_real += (double)input[index] * cos(angle);
+                expected_imaginary +=
+                    (double)input[index] * sin(angle);
+            }
+            ASSERT_TRUE(
+                fabs((double)real[bin] - expected_real) < tolerance &&
+                    fabs((double)imaginary[bin] -
+                         expected_imaginary) < tolerance,
+                "complex FFT should match the direct DFT");
+            ASSERT_TRUE(
+                fabs((double)packed_real[bin] - expected_real) <
+                        tolerance &&
+                    fabs((double)packed_imaginary[bin] -
+                         expected_imaginary) < tolerance,
+                "real-input FFT should match the direct DFT");
+        }
+
+        spectra_fft_inverse_real(
+            &plan, packed_real, packed_imaginary);
+        spectra_fft_inverse(&plan, real, imaginary);
+        for (unsigned int index = 0U; index < size; ++index) {
+            ASSERT_TRUE(
+                fabsf(packed_real[index] - input[index]) < 1.0e-5f,
+                "real inverse FFT should restore the input");
+            ASSERT_TRUE(
+                fabsf(real[index] - input[index]) < 1.0e-5f &&
+                    fabsf(imaginary[index]) < 1.0e-5f,
+                "complex inverse FFT should restore the input");
+        }
+
+        spectra_fft_plan_free(&plan);
+        free(input);
+        free(real);
+        free(imaginary);
+        free(packed_real);
+        free(packed_imaginary);
+    }
+    return 0;
+}
+
+static int test_fft_inverse_real_uses_positive_bins(void) {
+    const unsigned int size = 256U;
+    float *full_real = (float *)calloc(size, sizeof(float));
+    float *full_imaginary = (float *)calloc(size, sizeof(float));
+    float *half_real = (float *)calloc(size, sizeof(float));
+    float *half_imaginary = (float *)calloc(size, sizeof(float));
+    SpectraFftPlan plan = {0};
+    ASSERT_TRUE(
+        full_real != NULL && full_imaginary != NULL &&
+            half_real != NULL && half_imaginary != NULL &&
+            spectra_fft_plan_init(&plan, size),
+        "inverse FFT test should allocate buffers and a plan");
+
+    for (unsigned int bin = 0U; bin <= size / 2U; ++bin) {
+        const float bin_real = cosf(0.13f * (float)bin) / (1.0f + bin);
+        const float bin_imaginary =
+            bin == 0U || bin == size / 2U
+                ? 0.0f
+                : sinf(0.29f * (float)bin) / (1.0f + bin);
+        full_real[bin] = bin_real;
+        full_imaginary[bin] = bin_imaginary;
+        half_real[bin] = bin_real;
+        half_imaginary[bin] = bin_imaginary;
+        if (bin > 0U && bin < size / 2U) {
+            full_real[size - bin] = bin_real;
+            full_imaginary[size - bin] = -bin_imaginary;
+            half_real[size - bin] = 99.0f;
+            half_imaginary[size - bin] = -99.0f;
+        }
+    }
+    spectra_fft_inverse(&plan, full_real, full_imaginary);
+    spectra_fft_inverse_real(&plan, half_real, half_imaginary);
+    for (unsigned int index = 0U; index < size; ++index) {
+        ASSERT_TRUE(
+            fabsf(full_real[index] - half_real[index]) < 1.0e-6f,
+            "real inverse FFT should ignore the negative-frequency bins");
+    }
+
+    spectra_fft_plan_free(&plan);
+    free(full_real);
+    free(full_imaginary);
+    free(half_real);
+    free(half_imaginary);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--benchmark-effects") == 0) {
         return run_effect_benchmark();
     }
 
+    if (test_fft_plan_matches_direct_dft() != 0) return 1;
+    if (test_fft_inverse_real_uses_positive_bins() != 0) return 1;
     if (test_sine_length() != 0) return 1;
     if (test_hann_window() != 0) return 1;
     if (test_additive_normalization() != 0) return 1;
@@ -1368,6 +1580,7 @@ int main(int argc, char **argv) {
     if (test_playback_rate_pitch_shift() != 0) return 1;
     if (test_phase_vocoder_pitch_shift() != 0) return 1;
     if (test_parallel_phase_vocoder_matches_single_thread() != 0) return 1;
+    if (test_chunked_phase_vocoder_is_seamless() != 0) return 1;
     if (test_analytic_frequency_shift() != 0) return 1;
     if (test_spectral_eq_curve_shapes() != 0) return 1;
     if (test_spectral_range_equalizer() != 0) return 1;

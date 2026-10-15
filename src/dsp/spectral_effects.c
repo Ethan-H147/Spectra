@@ -1,6 +1,7 @@
 #include "dsp/spectral_effects.h"
 
 #include "dsp/fft.h"
+#include "dsp/fft_plan.h"
 #include "dsp/windowing.h"
 #include "platform/parallel_for.h"
 
@@ -26,175 +27,6 @@ static bool valid_transform(unsigned int window_size,
     return window_size >= 8U &&
            (window_size & (window_size - 1U)) == 0U &&
            hop_size > 0U && hop_size <= window_size;
-}
-
-typedef struct {
-    unsigned int size;
-    unsigned int *reversed_indices;
-    float *twiddle_real;
-    float *twiddle_imaginary;
-} RepeatedFftPlan;
-
-static unsigned int reverse_bits_for_plan(
-    unsigned int value,
-    unsigned int bits) {
-    unsigned int reversed = 0U;
-    for (unsigned int index = 0U; index < bits; ++index) {
-        reversed =
-            (reversed << 1U) | (value & 1U);
-        value >>= 1U;
-    }
-    return reversed;
-}
-
-static bool repeated_fft_plan_init(
-    RepeatedFftPlan *plan,
-    unsigned int size) {
-    if (plan == NULL || size < 2U ||
-        (size & (size - 1U)) != 0U) {
-        return false;
-    }
-
-    *plan = (RepeatedFftPlan){0};
-    plan->reversed_indices =
-        (unsigned int *)calloc(
-            size, sizeof(unsigned int));
-    plan->twiddle_real =
-        (float *)calloc(size - 1U, sizeof(float));
-    plan->twiddle_imaginary =
-        (float *)calloc(size - 1U, sizeof(float));
-    if (plan->reversed_indices == NULL ||
-        plan->twiddle_real == NULL ||
-        plan->twiddle_imaginary == NULL) {
-        free(plan->reversed_indices);
-        free(plan->twiddle_real);
-        free(plan->twiddle_imaginary);
-        *plan = (RepeatedFftPlan){0};
-        return false;
-    }
-
-    unsigned int bits = 0U;
-    for (unsigned int value = size;
-         value > 1U;
-         value >>= 1U) {
-        ++bits;
-    }
-    for (unsigned int index = 0U; index < size; ++index) {
-        plan->reversed_indices[index] =
-            reverse_bits_for_plan(index, bits);
-    }
-
-    for (unsigned int block_size = 2U;
-         block_size <= size;
-         block_size <<= 1U) {
-        const unsigned int half_block =
-            block_size / 2U;
-        const unsigned int offset = half_block - 1U;
-        const float angle_step =
-            -2.0f * (float)M_PI /
-            (float)block_size;
-        const float step_real = cosf(angle_step);
-        const float step_imaginary =
-            sinf(angle_step);
-        float twiddle_real = 1.0f;
-        float twiddle_imaginary = 0.0f;
-        for (unsigned int index = 0U;
-             index < half_block;
-             ++index) {
-            plan->twiddle_real[offset + index] =
-                twiddle_real;
-            plan->twiddle_imaginary[offset + index] =
-                twiddle_imaginary;
-            const float next_real =
-                twiddle_real * step_real -
-                twiddle_imaginary * step_imaginary;
-            twiddle_imaginary =
-                twiddle_real * step_imaginary +
-                twiddle_imaginary * step_real;
-            twiddle_real = next_real;
-        }
-    }
-    plan->size = size;
-    return true;
-}
-
-static void repeated_fft_plan_free(RepeatedFftPlan *plan) {
-    if (plan == NULL) {
-        return;
-    }
-    free(plan->reversed_indices);
-    free(plan->twiddle_real);
-    free(plan->twiddle_imaginary);
-    *plan = (RepeatedFftPlan){0};
-}
-
-static void repeated_fft(
-    const RepeatedFftPlan *plan,
-    float *real,
-    float *imaginary) {
-    if (plan == NULL || real == NULL ||
-        imaginary == NULL || plan->size < 2U) {
-        return;
-    }
-
-    const unsigned int size = plan->size;
-    for (unsigned int index = 0U; index < size; ++index) {
-        const unsigned int reversed =
-            plan->reversed_indices[index];
-        if (reversed > index) {
-            const float real_value = real[index];
-            const float imaginary_value =
-                imaginary[index];
-            real[index] = real[reversed];
-            imaginary[index] = imaginary[reversed];
-            real[reversed] = real_value;
-            imaginary[reversed] = imaginary_value;
-        }
-    }
-
-    for (unsigned int block_size = 2U;
-         block_size <= size;
-         block_size <<= 1U) {
-        const unsigned int half_block =
-            block_size / 2U;
-        const unsigned int offset = half_block - 1U;
-        for (unsigned int block_start = 0U;
-             block_start < size;
-             block_start += block_size) {
-            for (unsigned int index = 0U;
-                 index < half_block;
-                 ++index) {
-                const unsigned int even_index =
-                    block_start + index;
-                const unsigned int odd_index =
-                    even_index + half_block;
-                const float twiddle_real =
-                    plan->twiddle_real[offset + index];
-                const float twiddle_imaginary =
-                    plan->twiddle_imaginary[
-                        offset + index];
-                const float transformed_real =
-                    twiddle_real * real[odd_index] -
-                    twiddle_imaginary *
-                        imaginary[odd_index];
-                const float transformed_imaginary =
-                    twiddle_real *
-                        imaginary[odd_index] +
-                    twiddle_imaginary *
-                        real[odd_index];
-
-                real[odd_index] =
-                    real[even_index] -
-                    transformed_real;
-                imaginary[odd_index] =
-                    imaginary[even_index] -
-                    transformed_imaginary;
-                real[even_index] += transformed_real;
-                imaginary[even_index] +=
-                    transformed_imaginary;
-            }
-        }
-    }
 }
 
 static bool report_progress(
@@ -352,36 +184,6 @@ static float wrap_phase(float phase) {
     return remainderf(phase, 2.0f * (float)M_PI);
 }
 
-static void inverse_fft_real(
-    const RepeatedFftPlan *plan,
-    float *real,
-    float *imaginary) {
-    const unsigned int size = plan->size;
-    for (unsigned int index = 0U; index < size; ++index) {
-        imaginary[index] = -imaginary[index];
-    }
-    repeated_fft(plan, real, imaginary);
-    for (unsigned int index = 0U; index < size; ++index) {
-        real[index] /= (float)size;
-    }
-}
-
-static void inverse_fft_complex(
-    const RepeatedFftPlan *plan,
-    float *real,
-    float *imaginary) {
-    const unsigned int size = plan->size;
-    for (unsigned int index = 0U; index < size; ++index) {
-        imaginary[index] = -imaginary[index];
-    }
-    repeated_fft(plan, real, imaginary);
-    for (unsigned int index = 0U; index < size; ++index) {
-        real[index] /= (float)size;
-        imaginary[index] =
-            -imaginary[index] / (float)size;
-    }
-}
-
 static size_t centered_frame_count(size_t source_count,
                                    unsigned int hop_size) {
     return 1U +
@@ -396,15 +198,12 @@ static void load_centered_frame(
     unsigned int window_size,
     unsigned int hop_size,
     const float *window,
-    float *real,
-    float *imaginary) {
+    float *real) {
     const size_t padding = (size_t)window_size / 2U;
     const size_t padded_start =
         frame_index * (size_t)hop_size;
     memset(
         real, 0, (size_t)window_size * sizeof(float));
-    memset(
-        imaginary, 0, (size_t)window_size * sizeof(float));
 
     const unsigned int first_index =
         padded_start < padding
@@ -440,33 +239,183 @@ static void load_centered_frame(
     }
 }
 
+/*
+ * The phase vocoder runs in two passes over fixed-size chunks of analysis
+ * frames so that one channel can use every worker:
+ *
+ * 1. Each chunk measures the total synthesis-phase advance across its
+ *    frames. A short serial prefix scan turns those totals into the phase
+ *    state that enters each chunk.
+ * 2. Each chunk resynthesizes its frames from that entry state. Even chunks
+ *    run first, then odd chunks, so concurrent chunks never overlap-add into
+ *    the same output samples.
+ *
+ * The chunk partition depends only on the transform settings, never on the
+ * worker count, so serial and parallel runs produce identical output.
+ * Synthesis phases are wrapped after every frame, which keeps their
+ * precision constant across long files.
+ */
+#define PHASE_VOCODER_MINIMUM_CHUNK_FRAMES 64U
+
 typedef struct {
     const InterleavedBuffer *source;
     InterleavedBuffer *output;
     const float *window;
-    const float *weights;
     const float *expected_phase;
-    const float *base_angular_frequency;
-    const RepeatedFftPlan *fft_plan;
+    const float *phase_advance;
+    const SpectraFftPlan *fft_plan;
     float *worker_real;
     float *worker_imaginary;
     float *worker_previous_phase;
     float *worker_synthesis_phase;
-    float *worker_raw;
+    float *chunk_phase;
+    float *raw;
+    const float *weights;
+    float phase_ratio;
     float pitch_factor;
     double synthesis_hop;
+    unsigned int channel;
     unsigned int window_size;
     unsigned int analysis_hop;
-    unsigned int task_count;
     size_t phase_count;
     size_t frame_count;
+    size_t chunk_frames;
+    size_t chunk_count;
     size_t raw_count;
+    size_t chunk_parity;
+    float progress_base;
+    float progress_span;
     SpectralEffectProgressCallback progress_callback;
     void *progress_context;
     SpectraAtomicBoolean cancelled;
 } PhaseVocoderContext;
 
-static void process_phase_vocoder_channels(
+static void phase_vocoder_analyze_frame(
+    const PhaseVocoderContext *context,
+    size_t frame,
+    float *real,
+    float *imaginary) {
+    load_centered_frame(
+        context->source,
+        context->channel,
+        frame,
+        context->window_size,
+        context->analysis_hop,
+        context->window,
+        real);
+    spectra_fft_forward_real(
+        context->fft_plan, real, imaginary);
+}
+
+static float phase_vocoder_advance(
+    const PhaseVocoderContext *context,
+    size_t bin,
+    float phase,
+    float previous_phase) {
+    const float deviation = wrap_phase(
+        phase - previous_phase -
+        context->expected_phase[bin]);
+    return context->phase_advance[bin] +
+           deviation * context->phase_ratio;
+}
+
+static bool phase_vocoder_report(
+    PhaseVocoderContext *context,
+    unsigned int worker_index,
+    size_t completed,
+    size_t total) {
+    if (worker_index != 0U || total == 0U) {
+        return true;
+    }
+    const float fraction = (float)completed / (float)total;
+    if (!report_progress(
+            context->progress_callback,
+            context->progress_context,
+            context->progress_base +
+                context->progress_span * fraction)) {
+        spectra_atomic_boolean_store(
+            &context->cancelled, true);
+        return false;
+    }
+    return true;
+}
+
+static void measure_phase_vocoder_chunks(
+    size_t begin,
+    size_t end,
+    unsigned int worker_index,
+    void *context_pointer) {
+    PhaseVocoderContext *context =
+        (PhaseVocoderContext *)context_pointer;
+    float *real =
+        context->worker_real +
+        (size_t)worker_index * context->window_size;
+    float *imaginary =
+        context->worker_imaginary +
+        (size_t)worker_index * context->window_size;
+    float *previous_phase =
+        context->worker_previous_phase +
+        (size_t)worker_index * context->phase_count;
+
+    for (size_t chunk = begin; chunk < end; ++chunk) {
+        if (spectra_atomic_boolean_load(&context->cancelled)) {
+            return;
+        }
+        float *advance =
+            context->chunk_phase + chunk * context->phase_count;
+        const size_t first_frame = chunk * context->chunk_frames;
+        size_t end_frame = first_frame + context->chunk_frames;
+        if (end_frame > context->frame_count) {
+            end_frame = context->frame_count;
+        }
+
+        /* Chunk 0 starts from the phase of frame 0 itself. Later chunks
+         * measure only their own advance from the preceding frame. */
+        phase_vocoder_analyze_frame(
+            context,
+            first_frame > 0U ? first_frame - 1U : 0U,
+            real,
+            imaginary);
+        for (size_t bin = 0U; bin < context->phase_count; ++bin) {
+            previous_phase[bin] =
+                atan2f(imaginary[bin], real[bin]);
+            advance[bin] =
+                first_frame == 0U ? previous_phase[bin] : 0.0f;
+        }
+
+        for (size_t frame =
+                 first_frame > 0U ? first_frame : 1U;
+             frame < end_frame;
+             ++frame) {
+            phase_vocoder_analyze_frame(
+                context, frame, real, imaginary);
+            for (size_t bin = 0U;
+                 bin < context->phase_count;
+                 ++bin) {
+                const float phase =
+                    atan2f(imaginary[bin], real[bin]);
+                advance[bin] = wrap_phase(
+                    advance[bin] +
+                    phase_vocoder_advance(
+                        context,
+                        bin,
+                        phase,
+                        previous_phase[bin]));
+                previous_phase[bin] = phase;
+            }
+        }
+
+        if (!phase_vocoder_report(
+                context,
+                worker_index,
+                chunk - begin + 1U,
+                end - begin)) {
+            return;
+        }
+    }
+}
+
+static void synthesize_phase_vocoder_chunks(
     size_t begin,
     size_t end,
     unsigned int worker_index,
@@ -485,211 +434,151 @@ static void process_phase_vocoder_channels(
     float *synthesis_phase =
         context->worker_synthesis_phase +
         (size_t)worker_index * context->phase_count;
-    float *raw =
-        context->worker_raw +
-        (size_t)worker_index * context->raw_count;
-    const unsigned int final_bin =
-        context->window_size / 2U;
+    const size_t final_bin = context->phase_count - 1U;
 
-    const unsigned int progress_channel_begin =
-        (unsigned int)(
-            begin * context->source->channel_count /
-            context->task_count);
-    const unsigned int progress_channel_end =
-        (unsigned int)(
-            end * context->source->channel_count /
-            context->task_count);
-    const size_t progress_frame_count =
-        (size_t)(progress_channel_end -
-                 progress_channel_begin) *
-        context->frame_count;
+    for (size_t item = begin; item < end; ++item) {
+        if (spectra_atomic_boolean_load(&context->cancelled)) {
+            return;
+        }
+        const size_t chunk =
+            context->chunk_parity + item * 2U;
+        const size_t first_frame = chunk * context->chunk_frames;
+        size_t end_frame = first_frame + context->chunk_frames;
+        if (end_frame > context->frame_count) {
+            end_frame = context->frame_count;
+        }
 
-    for (size_t task = begin; task < end; ++task) {
-        const unsigned int channel_begin =
-            (unsigned int)(
-                task * context->source->channel_count /
-                context->task_count);
-        const unsigned int channel_end =
-            (unsigned int)(
-                (task + 1U) *
-                context->source->channel_count /
-                context->task_count);
-        for (unsigned int channel = channel_begin;
-             channel < channel_end;
-             ++channel) {
-            if (spectra_atomic_boolean_load(
+        if (first_frame > 0U) {
+            phase_vocoder_analyze_frame(
+                context, first_frame - 1U, real, imaginary);
+            const float *entry_phase =
+                context->chunk_phase +
+                chunk * context->phase_count;
+            for (size_t bin = 0U;
+                 bin < context->phase_count;
+                 ++bin) {
+                previous_phase[bin] =
+                    atan2f(imaginary[bin], real[bin]);
+                synthesis_phase[bin] = entry_phase[bin];
+            }
+        }
+
+        for (size_t frame = first_frame;
+             frame < end_frame;
+             ++frame) {
+            if (((frame - first_frame) & 7U) == 7U &&
+                spectra_atomic_boolean_load(
                     &context->cancelled)) {
                 return;
             }
-            memset(
-                previous_phase,
-                0,
-                context->phase_count * sizeof(float));
-            memset(
-                synthesis_phase,
-                0,
-                context->phase_count * sizeof(float));
-            memset(
-                raw,
-                0,
-                context->raw_count * sizeof(float));
-
-            for (size_t frame = 0U;
-                 frame < context->frame_count;
-                 ++frame) {
-                if ((frame & 7U) == 0U &&
-                    spectra_atomic_boolean_load(
-                        &context->cancelled)) {
-                    return;
+            phase_vocoder_analyze_frame(
+                context, frame, real, imaginary);
+            for (size_t bin = 0U; bin <= final_bin; ++bin) {
+                const float magnitude =
+                    hypotf(real[bin], imaginary[bin]);
+                const float phase =
+                    atan2f(imaginary[bin], real[bin]);
+                if (frame == 0U) {
+                    synthesis_phase[bin] = phase;
+                } else {
+                    synthesis_phase[bin] = wrap_phase(
+                        synthesis_phase[bin] +
+                        phase_vocoder_advance(
+                            context,
+                            bin,
+                            phase,
+                            previous_phase[bin]));
                 }
-                load_centered_frame(
-                    context->source,
-                    channel,
-                    frame,
-                    context->window_size,
-                    context->analysis_hop,
-                    context->window,
-                    real,
-                    imaginary);
-                repeated_fft(
-                    context->fft_plan, real, imaginary);
+                previous_phase[bin] = phase;
 
-                for (unsigned int bin = 0U;
-                     bin <= final_bin;
-                     ++bin) {
-                    const float magnitude =
-                        hypotf(real[bin], imaginary[bin]);
-                    const float phase =
-                        atan2f(imaginary[bin], real[bin]);
-                    if (frame == 0U) {
-                        synthesis_phase[bin] = phase;
-                    } else {
-                        const float deviation =
-                            wrap_phase(
-                                phase -
-                                previous_phase[bin] -
-                                context->expected_phase[bin]);
-                        const float angular_frequency =
-                            context
-                                ->base_angular_frequency[bin] +
-                            deviation /
-                                (float)context->analysis_hop;
-                        synthesis_phase[bin] +=
-                            angular_frequency *
-                            (float)context->synthesis_hop;
-                    }
-                    previous_phase[bin] = phase;
-
-                    if (bin == 0U || bin == final_bin) {
-                        real[bin] =
-                            magnitude *
-                            cosf(synthesis_phase[bin]);
-                        imaginary[bin] = 0.0f;
-                    } else {
-                        const float output_real =
-                            magnitude *
-                            cosf(synthesis_phase[bin]);
-                        const float output_imaginary =
-                            magnitude *
-                            sinf(synthesis_phase[bin]);
-                        real[bin] = output_real;
-                        imaginary[bin] = output_imaginary;
-                        real[context->window_size - bin] =
-                            output_real;
-                        imaginary[
-                            context->window_size - bin] =
-                            -output_imaginary;
-                    }
-                }
-
-                inverse_fft_real(
-                    context->fft_plan, real, imaginary);
-                const double synthesis_start =
-                    (double)frame * context->synthesis_hop;
-                const size_t first_start =
-                    (size_t)synthesis_start;
-                const float fraction =
-                    (float)(
-                        synthesis_start -
-                        (double)first_start);
-                const float first_weight =
-                    1.0f - fraction;
-                for (unsigned int index = 0U;
-                     index < context->window_size;
-                     ++index) {
-                    const size_t first =
-                        first_start + (size_t)index;
-                    if (first >= context->raw_count) {
-                        break;
-                    }
-                    const float sample =
-                        real[index] * context->window[index];
-                    raw[first] += sample * first_weight;
-                    if (fraction > 0.0f &&
-                        first + 1U < context->raw_count) {
-                        raw[first + 1U] += sample * fraction;
-                    }
-                }
-
-                if (worker_index == 0U &&
-                    (frame & 7U) == 7U &&
-                    progress_frame_count > 0U) {
-                    const size_t completed_frames =
-                        (size_t)(
-                            channel - progress_channel_begin) *
-                            context->frame_count +
-                        frame + 1U;
-                    if (!report_progress(
-                            context->progress_callback,
-                            context->progress_context,
-                            0.85f *
-                                (float)completed_frames /
-                                (float)progress_frame_count)) {
-                        spectra_atomic_boolean_store(
-                            &context->cancelled, true);
-                        return;
-                    }
-                }
+                /* The real inverse reads only the non-negative bins. */
+                real[bin] =
+                    magnitude * cosf(synthesis_phase[bin]);
+                imaginary[bin] =
+                    bin == 0U || bin == final_bin
+                        ? 0.0f
+                        : magnitude *
+                              sinf(synthesis_phase[bin]);
             }
 
-            for (size_t index = 0U;
-                 index < context->raw_count;
+            spectra_fft_inverse_real(
+                context->fft_plan, real, imaginary);
+            const double synthesis_start =
+                (double)frame * context->synthesis_hop;
+            const size_t first_start =
+                (size_t)synthesis_start;
+            const float fraction =
+                (float)(synthesis_start - (double)first_start);
+            const float first_weight = 1.0f - fraction;
+            for (unsigned int index = 0U;
+                 index < context->window_size;
                  ++index) {
-                raw[index] =
-                    context->weights[index] > 1.0e-8f
-                        ? raw[index] /
-                              context->weights[index]
-                        : 0.0f;
-            }
-
-            const double padding =
-                (double)context->window_size * 0.5;
-            for (size_t frame = 0U;
-                 frame < context->source->frame_count;
-                 ++frame) {
-                const double position =
-                    padding +
-                    (double)frame *
-                        (double)context->pitch_factor;
-                const size_t first = (size_t)position;
-                const size_t second =
-                    first + 1U < context->raw_count
-                        ? first + 1U
-                        : first;
-                const float fraction =
-                    (float)(position - (double)first);
+                const size_t first =
+                    first_start + (size_t)index;
+                if (first >= context->raw_count) {
+                    break;
+                }
                 const float sample =
-                    first < context->raw_count
-                        ? raw[first] +
-                              (raw[second] - raw[first]) *
-                                  fraction
-                        : 0.0f;
-                context->output->samples[
-                    frame *
-                        (size_t)context->source->channel_count +
-                    (size_t)channel] = sample;
+                    real[index] * context->window[index];
+                context->raw[first] += sample * first_weight;
+                if (fraction > 0.0f &&
+                    first + 1U < context->raw_count) {
+                    context->raw[first + 1U] += sample * fraction;
+                }
             }
         }
+
+        if (!phase_vocoder_report(
+                context,
+                worker_index,
+                item - begin + 1U,
+                end - begin)) {
+            return;
+        }
+    }
+}
+
+static void resample_phase_vocoder_output(
+    size_t begin,
+    size_t end,
+    unsigned int worker_index,
+    void *context_pointer) {
+    (void)worker_index;
+    PhaseVocoderContext *context =
+        (PhaseVocoderContext *)context_pointer;
+    const float *raw = context->raw;
+    const float *weights = context->weights;
+    const size_t raw_count = context->raw_count;
+    const unsigned int channel_count =
+        context->source->channel_count;
+    const double padding =
+        (double)context->window_size * 0.5;
+    for (size_t frame = begin; frame < end; ++frame) {
+        const double position =
+            padding +
+            (double)frame * (double)context->pitch_factor;
+        const size_t first = (size_t)position;
+        float sample = 0.0f;
+        if (first < raw_count) {
+            const size_t second =
+                first + 1U < raw_count ? first + 1U : first;
+            const float fraction =
+                (float)(position - (double)first);
+            const float first_value =
+                weights[first] > 1.0e-8f
+                    ? raw[first] / weights[first]
+                    : 0.0f;
+            const float second_value =
+                weights[second] > 1.0e-8f
+                    ? raw[second] / weights[second]
+                    : 0.0f;
+            sample =
+                first_value +
+                (second_value - first_value) * fraction;
+        }
+        context->output->samples[
+            frame * (size_t)channel_count +
+            (size_t)context->channel] = sample;
     }
 }
 
@@ -721,20 +610,28 @@ bool phase_vocoder_pitch_shift(
         return false;
     }
     const size_t raw_count = (size_t)raw_count_double;
-    const unsigned int task_count =
-        source->channel_count < 4U
-            ? source->channel_count
-            : 4U;
-    const unsigned int worker_count =
-        spectra_parallel_worker_count(task_count, 1U);
     const size_t phase_count =
         (size_t)window_size / 2U + 1U;
+
+    /* Chunks c and c + 2 must never overlap-add into the same samples, so a
+     * chunk's synthesis span has to exceed one window plus the
+     * interpolation sample. */
+    size_t chunk_frames = PHASE_VOCODER_MINIMUM_CHUNK_FRAMES;
+    const size_t separating_frames =
+        (size_t)ceil(
+            ((double)window_size + 2.0) / synthesis_hop) + 1U;
+    if (chunk_frames < separating_frames) {
+        chunk_frames = separating_frames;
+    }
+    const size_t chunk_count =
+        (frame_count + chunk_frames - 1U) / chunk_frames;
+    const unsigned int worker_count =
+        spectra_parallel_worker_count(chunk_count, 1U);
     if ((size_t)worker_count >
             SIZE_MAX / (size_t)window_size ||
-        (size_t)worker_count >
-            SIZE_MAX / phase_count ||
-        (size_t)worker_count >
-            SIZE_MAX / raw_count) {
+        (size_t)worker_count > SIZE_MAX / phase_count ||
+        chunk_count > SIZE_MAX / phase_count ||
+        raw_count > SIZE_MAX / sizeof(float)) {
         return false;
     }
 
@@ -747,88 +644,70 @@ bool phase_vocoder_pitch_shift(
         return false;
     }
 
-    float *window = NULL;
-    float *worker_real = NULL;
-    float *worker_imaginary = NULL;
-    float *worker_previous_phase = NULL;
-    float *worker_synthesis_phase = NULL;
-    float *worker_raw = NULL;
-    float *weights = NULL;
-    float *window_squared = NULL;
-    float *expected_phase = NULL;
-    float *base_angular_frequency = NULL;
-    RepeatedFftPlan fft_plan = {0};
-    window =
+    float *window =
         (float *)calloc(window_size, sizeof(float));
-    worker_real = (float *)calloc(
+    float *worker_real = (float *)calloc(
         (size_t)worker_count * window_size,
         sizeof(float));
-    worker_imaginary = (float *)calloc(
+    float *worker_imaginary = (float *)calloc(
         (size_t)worker_count * window_size,
         sizeof(float));
-    worker_previous_phase = (float *)calloc(
+    float *worker_previous_phase = (float *)calloc(
         (size_t)worker_count * phase_count,
         sizeof(float));
-    worker_synthesis_phase = (float *)calloc(
+    float *worker_synthesis_phase = (float *)calloc(
         (size_t)worker_count * phase_count,
         sizeof(float));
-    worker_raw = (float *)calloc(
-        (size_t)worker_count * raw_count,
+    float *chunk_phase = (float *)calloc(
+        chunk_count * phase_count,
         sizeof(float));
-    weights =
+    float *raw =
+        (float *)malloc(raw_count * sizeof(float));
+    float *weights =
         (float *)calloc(raw_count, sizeof(float));
-    window_squared =
-        (float *)calloc(window_size, sizeof(float));
-    expected_phase =
+    float *expected_phase =
         (float *)calloc(phase_count, sizeof(float));
-    base_angular_frequency =
+    float *phase_advance =
         (float *)calloc(phase_count, sizeof(float));
+    SpectraFftPlan fft_plan = {0};
     if (window == NULL ||
         worker_real == NULL ||
         worker_imaginary == NULL ||
         worker_previous_phase == NULL ||
         worker_synthesis_phase == NULL ||
-        worker_raw == NULL ||
+        chunk_phase == NULL ||
+        raw == NULL ||
         weights == NULL ||
-        window_squared == NULL ||
         expected_phase == NULL ||
-        base_angular_frequency == NULL ||
-        !repeated_fft_plan_init(
+        phase_advance == NULL ||
+        !spectra_fft_plan_init(
             &fft_plan, window_size)) {
         free(window);
         free(worker_real);
         free(worker_imaginary);
         free(worker_previous_phase);
         free(worker_synthesis_phase);
-        free(worker_raw);
+        free(chunk_phase);
+        free(raw);
         free(weights);
-        free(window_squared);
         free(expected_phase);
-        free(base_angular_frequency);
-        repeated_fft_plan_free(&fft_plan);
+        free(phase_advance);
+        spectra_fft_plan_free(&fft_plan);
         interleaved_buffer_free(&prepared);
         return false;
     }
     hann_window(window, window_size);
-    for (unsigned int index = 0U;
-         index < window_size;
-         ++index) {
-        window_squared[index] =
-            window[index] * window[index];
-    }
 
-    const unsigned int final_bin = window_size / 2U;
-    const float expected_scale =
-        2.0f * (float)M_PI *
-        (float)analysis_hop / (float)window_size;
-    for (unsigned int bin = 0U;
-         bin <= final_bin;
-         ++bin) {
-        expected_phase[bin] =
-            expected_scale * (float)bin;
-        base_angular_frequency[bin] =
-            2.0f * (float)M_PI *
-            (float)bin / (float)window_size;
+    /* Per-bin phase terms are reduced modulo 2 pi in double precision so
+     * high bins keep full float precision. */
+    const double two_pi = 2.0 * M_PI;
+    for (size_t bin = 0U; bin < phase_count; ++bin) {
+        const double bin_angle =
+            two_pi * (double)bin / (double)window_size;
+        expected_phase[bin] = (float)remainder(
+            bin_angle * (double)analysis_hop, two_pi);
+        phase_advance[bin] = (float)remainder(
+            bin_angle * synthesis_hop, two_pi);
     }
 
     for (size_t frame = 0U;
@@ -853,7 +732,7 @@ bool phase_vocoder_pitch_shift(
                 break;
             }
             const float weight =
-                window_squared[index];
+                window[index] * window[index];
             weights[first] +=
                 weight * first_weight;
             if (fraction > 0.0f &&
@@ -868,53 +747,117 @@ bool phase_vocoder_pitch_shift(
         .source = source,
         .output = &prepared,
         .window = window,
-        .weights = weights,
         .expected_phase = expected_phase,
-        .base_angular_frequency = base_angular_frequency,
+        .phase_advance = phase_advance,
         .fft_plan = &fft_plan,
         .worker_real = worker_real,
         .worker_imaginary = worker_imaginary,
         .worker_previous_phase = worker_previous_phase,
         .worker_synthesis_phase = worker_synthesis_phase,
-        .worker_raw = worker_raw,
+        .chunk_phase = chunk_phase,
+        .raw = raw,
+        .weights = weights,
+        .phase_ratio = pitch_factor,
         .pitch_factor = pitch_factor,
         .synthesis_hop = synthesis_hop,
         .window_size = window_size,
         .analysis_hop = analysis_hop,
-        .task_count = task_count,
         .phase_count = phase_count,
         .frame_count = frame_count,
+        .chunk_frames = chunk_frames,
+        .chunk_count = chunk_count,
         .raw_count = raw_count,
         .progress_callback = progress_callback,
         .progress_context = progress_context,
     };
     spectra_atomic_boolean_init(&context.cancelled, false);
-    spectra_parallel_for_limited(
-        task_count,
-        1U,
-        worker_count,
-        process_phase_vocoder_channels,
-        &context);
-    bool completed =
-        !spectra_atomic_boolean_load(&context.cancelled);
-    if (completed) {
-        completed = report_progress(
-            progress_callback,
-            progress_context,
-            0.98f);
+
+    const float channel_span =
+        0.95f / (float)source->channel_count;
+    for (unsigned int channel = 0U;
+         channel < source->channel_count &&
+         !spectra_atomic_boolean_load(&context.cancelled);
+         ++channel) {
+        const float channel_base =
+            channel_span * (float)channel;
+        context.channel = channel;
+        memset(raw, 0, raw_count * sizeof(float));
+
+        /* Pass 1. The final chunk's advance is never needed. */
+        context.progress_base = channel_base;
+        context.progress_span = channel_span * 0.35f;
+        spectra_parallel_for_limited(
+            chunk_count - 1U,
+            1U,
+            worker_count,
+            measure_phase_vocoder_chunks,
+            &context);
+        if (spectra_atomic_boolean_load(&context.cancelled)) {
+            break;
+        }
+
+        /* Turn per-chunk advances into each chunk's entry phase. */
+        for (size_t bin = 0U; bin < phase_count; ++bin) {
+            float running = chunk_phase[bin];
+            for (size_t chunk = 1U; chunk < chunk_count; ++chunk) {
+                float *entry =
+                    chunk_phase + chunk * phase_count + bin;
+                const float advance = *entry;
+                *entry = running;
+                running = wrap_phase(running + advance);
+            }
+        }
+
+        /* Pass 2: even chunks, then odd chunks. */
+        for (size_t parity = 0U;
+             parity < 2U &&
+             !spectra_atomic_boolean_load(&context.cancelled);
+             ++parity) {
+            context.chunk_parity = parity;
+            context.progress_base =
+                channel_base +
+                channel_span * (0.35f + 0.3f * (float)parity);
+            context.progress_span = channel_span * 0.3f;
+            spectra_parallel_for_limited(
+                chunk_count > parity
+                    ? (chunk_count - parity + 1U) / 2U
+                    : 0U,
+                1U,
+                worker_count,
+                synthesize_phase_vocoder_chunks,
+                &context);
+        }
+        if (spectra_atomic_boolean_load(&context.cancelled)) {
+            break;
+        }
+
+        spectra_parallel_for(
+            source->frame_count,
+            65536U,
+            resample_phase_vocoder_output,
+            &context);
+        if (!report_progress(
+                progress_callback,
+                progress_context,
+                channel_base + channel_span)) {
+            spectra_atomic_boolean_store(
+                &context.cancelled, true);
+        }
     }
+    const bool completed =
+        !spectra_atomic_boolean_load(&context.cancelled);
 
     free(window);
     free(worker_real);
     free(worker_imaginary);
     free(worker_previous_phase);
     free(worker_synthesis_phase);
-    free(worker_raw);
+    free(chunk_phase);
+    free(raw);
     free(weights);
-    free(window_squared);
     free(expected_phase);
-    free(base_angular_frequency);
-    repeated_fft_plan_free(&fft_plan);
+    free(phase_advance);
+    spectra_fft_plan_free(&fft_plan);
 
     if (!completed ||
         !report_progress(
@@ -964,7 +907,7 @@ typedef struct {
     const float *window;
     const double *oscillator_real;
     const double *oscillator_imaginary;
-    const RepeatedFftPlan *fft_plan;
+    const SpectraFftPlan *fft_plan;
     float *worker_real;
     float *worker_imaginary;
     double phase_scale;
@@ -1006,9 +949,8 @@ static void process_frequency_shift_frame_range(
             context->window_size,
             context->hop_size,
             context->window,
-            real,
-            imaginary);
-        repeated_fft(context->fft_plan, real, imaginary);
+            real);
+        spectra_fft_forward_real(context->fft_plan, real, imaginary);
 
         imaginary[0] = 0.0f;
         for (unsigned int bin = 1U;
@@ -1024,7 +966,7 @@ static void process_frequency_shift_frame_range(
             real[bin] = 0.0f;
             imaginary[bin] = 0.0f;
         }
-        inverse_fft_complex(
+        spectra_fft_inverse(
             context->fft_plan, real, imaginary);
 
         const size_t padded_start =
@@ -1138,13 +1080,13 @@ bool analytic_frequency_shift(
         (double *)calloc(window_size, sizeof(double));
     double *oscillator_imaginary =
         (double *)calloc(window_size, sizeof(double));
-    RepeatedFftPlan fft_plan = {0};
+    SpectraFftPlan fft_plan = {0};
     if (window == NULL || worker_real == NULL ||
         worker_imaginary == NULL || weights == NULL ||
         window_squared == NULL ||
         oscillator_real == NULL ||
         oscillator_imaginary == NULL ||
-        !repeated_fft_plan_init(
+        !spectra_fft_plan_init(
             &fft_plan, window_size)) {
         free(window);
         free(worker_real);
@@ -1153,7 +1095,7 @@ bool analytic_frequency_shift(
         free(window_squared);
         free(oscillator_real);
         free(oscillator_imaginary);
-        repeated_fft_plan_free(&fft_plan);
+        spectra_fft_plan_free(&fft_plan);
         interleaved_buffer_free(&prepared);
         return false;
     }
@@ -1278,7 +1220,7 @@ bool analytic_frequency_shift(
     free(window_squared);
     free(oscillator_real);
     free(oscillator_imaginary);
-    repeated_fft_plan_free(&fft_plan);
+    spectra_fft_plan_free(&fft_plan);
 
     if (!completed ||
         !report_progress(
@@ -1413,7 +1355,7 @@ typedef struct {
     InterleavedBuffer *output;
     const float *window;
     const float *bin_gains;
-    const RepeatedFftPlan *fft_plan;
+    const SpectraFftPlan *fft_plan;
     float *worker_real;
     float *worker_imaginary;
     size_t frame_offset;
@@ -1454,24 +1396,18 @@ static void process_eq_frame_range(
             context->window_size,
             context->hop_size,
             context->window,
-            real,
-            imaginary);
-        repeated_fft(context->fft_plan, real, imaginary);
+            real);
+        spectra_fft_forward_real(context->fft_plan, real, imaginary);
 
+        /* The real inverse reads only the non-negative bins. */
         for (unsigned int bin = 0U;
              bin <= final_bin;
              ++bin) {
             const float gain = context->bin_gains[bin];
             real[bin] *= gain;
             imaginary[bin] *= gain;
-            if (bin > 0U && bin < final_bin) {
-                const unsigned int mirror =
-                    context->window_size - bin;
-                real[mirror] *= gain;
-                imaginary[mirror] *= gain;
-            }
         }
-        inverse_fft_real(
+        spectra_fft_inverse_real(
             context->fft_plan, real, imaginary);
 
         const size_t padded_start =
@@ -1584,11 +1520,11 @@ bool spectral_range_equalize(
         (float *)calloc(
             (size_t)window_size / 2U + 1U,
             sizeof(float));
-    RepeatedFftPlan fft_plan = {0};
+    SpectraFftPlan fft_plan = {0};
     if (window == NULL || window_squared == NULL ||
         worker_real == NULL || worker_imaginary == NULL ||
         weights == NULL || bin_gains == NULL ||
-        !repeated_fft_plan_init(
+        !spectra_fft_plan_init(
             &fft_plan, window_size)) {
         free(window);
         free(window_squared);
@@ -1596,7 +1532,7 @@ bool spectral_range_equalize(
         free(worker_imaginary);
         free(weights);
         free(bin_gains);
-        repeated_fft_plan_free(&fft_plan);
+        spectra_fft_plan_free(&fft_plan);
         interleaved_buffer_free(&prepared);
         return false;
     }
@@ -1718,7 +1654,7 @@ bool spectral_range_equalize(
     free(worker_imaginary);
     free(weights);
     free(bin_gains);
-    repeated_fft_plan_free(&fft_plan);
+    spectra_fft_plan_free(&fft_plan);
 
     if (!completed ||
         !report_progress(

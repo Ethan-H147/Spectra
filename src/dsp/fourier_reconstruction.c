@@ -1,6 +1,7 @@
 #include "dsp/fourier_reconstruction.h"
 
 #include "dsp/fft.h"
+#include "dsp/fft_plan.h"
 #include "dsp/signal_utils.h"
 #include "dsp/windowing.h"
 
@@ -61,7 +62,9 @@ bool analyze_fourier_frame(const SampleBuffer *region, FourierFrameAnalysis *ana
     FourierComponent *components =
         (FourierComponent *)calloc((size_t)fft_size / 2U - 1U, sizeof(FourierComponent));
     float *original = (float *)calloc(fft_size, sizeof(float));
-    if (window == NULL || real == NULL || imaginary == NULL || components == NULL || original == NULL) {
+    SpectraFftPlan plan = {0};
+    if (window == NULL || real == NULL || imaginary == NULL || components == NULL || original == NULL ||
+        !spectra_fft_plan_init(&plan, fft_size)) {
         free(window);
         free(real);
         free(imaginary);
@@ -75,7 +78,8 @@ bool analyze_fourier_frame(const SampleBuffer *region, FourierFrameAnalysis *ana
         original[index] = region->samples[start + index] * window[index];
         real[index] = original[index];
     }
-    fft_radix2(real, imaginary, fft_size);
+    spectra_fft_forward_real(&plan, real, imaginary);
+    spectra_fft_plan_free(&plan);
 
     size_t component_count = (size_t)fft_size / 2U - 1U;
     for (size_t index = 0U; index < component_count; index++) {
@@ -128,7 +132,9 @@ SampleBuffer reconstruct_fourier_frame(const FourierFrameAnalysis *analysis, siz
     unsigned int fft_size = analysis->fft_size;
     float *real = (float *)calloc(fft_size, sizeof(float));
     float *imaginary = (float *)calloc(fft_size, sizeof(float));
-    if (real == NULL || imaginary == NULL) {
+    SpectraFftPlan plan = {0};
+    if (real == NULL || imaginary == NULL ||
+        !spectra_fft_plan_init(&plan, fft_size)) {
         free(real);
         free(imaginary);
         return result;
@@ -145,13 +151,8 @@ SampleBuffer reconstruct_fourier_frame(const FourierFrameAnalysis *analysis, siz
         imaginary[fft_size - bin] = -component->imaginary;
     }
 
-    for (unsigned int index = 0U; index < fft_size; index++) {
-        imaginary[index] = -imaginary[index];
-    }
-    fft_radix2(real, imaginary, fft_size);
-    for (unsigned int index = 0U; index < fft_size; index++) {
-        real[index] /= (float)fft_size;
-    }
+    spectra_fft_inverse_real(&plan, real, imaginary);
+    spectra_fft_plan_free(&plan);
     free(imaginary);
 
     result.samples = real;

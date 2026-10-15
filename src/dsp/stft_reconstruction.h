@@ -2,6 +2,7 @@
 #define SPECTRA_STFT_RECONSTRUCTION_H
 
 #include "dsp/dsp_types.h"
+#include "dsp/fft_plan.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -39,6 +40,7 @@ typedef struct {
     float *window;
     float *real;
     float *imaginary;
+    SpectraFftPlan fft_plan;
     float *overlap_weights;
     unsigned char *kept_bins;
     StftBinRank *ranked_bins;

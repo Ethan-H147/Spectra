@@ -25,6 +25,11 @@ extern "C" {
 #include "platform/parallel_for.h"
 }
 
+// The single object QML talks to. Its implementation is split by workspace:
+// spectra_controller.cpp (startup, settings, import, shared playback) and
+// spectra_controller_<synth|analysis|harmonic_lab|spectrogram|effects|eq|
+// instant_preview>.cpp. Shared constants and helpers live in
+// controller_support.h.
 class SpectraController final : public QObject {
     Q_OBJECT
 
@@ -50,7 +55,7 @@ class SpectraController final : public QObject {
     Q_PROPERTY(QVariantList synthWaveform READ synthWaveform NOTIFY synthVisualizationChanged)
     Q_PROPERTY(QVariantList synthWaveformMinimums READ synthWaveformMinimums NOTIFY synthVisualizationChanged)
     Q_PROPERTY(QVariantList synthWaveformMaximums READ synthWaveformMaximums NOTIFY synthVisualizationChanged)
-    Q_PROPERTY(QVariantList synthSpectrum READ synthSpectrum NOTIFY synthVisualizationChanged)
+    Q_PROPERTY(QList<qreal> synthSpectrum READ synthSpectrum NOTIFY synthVisualizationChanged)
     Q_PROPERTY(QVariantList synthPeaks READ synthPeaks NOTIFY synthVisualizationChanged)
     Q_PROPERTY(QString synthPitch READ synthPitch NOTIFY synthVisualizationChanged)
     Q_PROPERTY(QString synthNote READ synthNote NOTIFY synthVisualizationChanged)
@@ -73,7 +78,7 @@ class SpectraController final : public QObject {
     Q_PROPERTY(double regionDuration READ regionDuration WRITE setRegionDuration NOTIFY analysisChanged)
     Q_PROPERTY(QVariantList sourceWaveformMinimums READ sourceWaveformMinimums NOTIFY sourceChanged)
     Q_PROPERTY(QVariantList sourceWaveformMaximums READ sourceWaveformMaximums NOTIFY sourceChanged)
-    Q_PROPERTY(QVariantList analysisSpectrum READ analysisSpectrum NOTIFY analysisChanged)
+    Q_PROPERTY(QList<qreal> analysisSpectrum READ analysisSpectrum NOTIFY analysisChanged)
     Q_PROPERTY(QVariantList analysisPeaks READ analysisPeaks NOTIFY analysisChanged)
     Q_PROPERTY(int analysisPeakReadoutMode READ analysisPeakReadoutMode NOTIFY analysisChanged)
     Q_PROPERTY(QString analysisPitch READ analysisPitch NOTIFY analysisChanged)
@@ -135,8 +140,8 @@ class SpectraController final : public QObject {
     Q_PROPERTY(int effectOutputChannels READ effectOutputChannels NOTIFY effectChanged)
     Q_PROPERTY(int effectWindowSize READ effectWindowSize CONSTANT)
     Q_PROPERTY(int effectHopSize READ effectHopSize CONSTANT)
-    Q_PROPERTY(QVariantList effectOriginalSpectrum READ effectOriginalSpectrum NOTIFY effectSpectrumChanged)
-    Q_PROPERTY(QVariantList effectTransformedSpectrum READ effectTransformedSpectrum NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(QList<qreal> effectOriginalSpectrum READ effectOriginalSpectrum NOTIFY effectSpectrumChanged)
+    Q_PROPERTY(QList<qreal> effectTransformedSpectrum READ effectTransformedSpectrum NOTIFY effectSpectrumChanged)
     Q_PROPERTY(double effectSpectrumMaximumFrequency READ effectSpectrumMaximumFrequency NOTIFY effectSpectrumChanged)
     Q_PROPERTY(double effectOriginalPeakFrequency READ effectOriginalPeakFrequency NOTIFY effectSpectrumChanged)
     Q_PROPERTY(double effectTransformedPeakFrequency READ effectTransformedPeakFrequency NOTIFY effectSpectrumChanged)
@@ -155,8 +160,8 @@ class SpectraController final : public QObject {
     Q_PROPERTY(double eqProgress READ eqProgress NOTIFY eqChanged)
     Q_PROPERTY(double eqOutputDuration READ eqOutputDuration NOTIFY eqChanged)
     Q_PROPERTY(int eqOutputChannels READ eqOutputChannels NOTIFY eqChanged)
-    Q_PROPERTY(QVariantList eqOriginalSpectrum READ eqOriginalSpectrum NOTIFY eqSpectrumChanged)
-    Q_PROPERTY(QVariantList eqTransformedSpectrum READ eqTransformedSpectrum NOTIFY eqSpectrumChanged)
+    Q_PROPERTY(QList<qreal> eqOriginalSpectrum READ eqOriginalSpectrum NOTIFY eqSpectrumChanged)
+    Q_PROPERTY(QList<qreal> eqTransformedSpectrum READ eqTransformedSpectrum NOTIFY eqSpectrumChanged)
     Q_PROPERTY(double eqSpectrumMaximumFrequency READ eqSpectrumMaximumFrequency NOTIFY eqSpectrumChanged)
     Q_PROPERTY(bool eqSpectrumPreview READ eqSpectrumPreview NOTIFY eqSpectrumChanged)
     Q_PROPERTY(bool eqSpectrumAnalyzing READ eqSpectrumAnalyzing NOTIFY eqSpectrumChanged)
@@ -201,7 +206,7 @@ public:
     QVariantList synthWaveform() const;
     QVariantList synthWaveformMinimums() const;
     QVariantList synthWaveformMaximums() const;
-    QVariantList synthSpectrum() const;
+    QList<qreal> synthSpectrum() const;
     QVariantList synthPeaks() const;
     QString synthPitch() const;
     QString synthNote() const;
@@ -224,7 +229,7 @@ public:
     double regionDuration() const;
     QVariantList sourceWaveformMinimums() const;
     QVariantList sourceWaveformMaximums() const;
-    QVariantList analysisSpectrum() const;
+    QList<qreal> analysisSpectrum() const;
     QVariantList analysisPeaks() const;
     int analysisPeakReadoutMode() const;
     QString analysisPitch() const;
@@ -286,8 +291,8 @@ public:
     int effectOutputChannels() const;
     int effectWindowSize() const;
     int effectHopSize() const;
-    QVariantList effectOriginalSpectrum() const;
-    QVariantList effectTransformedSpectrum() const;
+    QList<qreal> effectOriginalSpectrum() const;
+    QList<qreal> effectTransformedSpectrum() const;
     double effectSpectrumMaximumFrequency() const;
     double effectOriginalPeakFrequency() const;
     double effectTransformedPeakFrequency() const;
@@ -306,8 +311,8 @@ public:
     double eqProgress() const;
     double eqOutputDuration() const;
     int eqOutputChannels() const;
-    QVariantList eqOriginalSpectrum() const;
-    QVariantList eqTransformedSpectrum() const;
+    QList<qreal> eqOriginalSpectrum() const;
+    QList<qreal> eqTransformedSpectrum() const;
     double eqSpectrumMaximumFrequency() const;
     bool eqSpectrumPreview() const;
     bool eqSpectrumAnalyzing() const;
@@ -563,7 +568,7 @@ private:
     QVariantList synthWaveform_;
     QVariantList synthWaveformMinimums_;
     QVariantList synthWaveformMaximums_;
-    QVariantList synthSpectrum_;
+    QList<qreal> synthSpectrum_;
     QVariantList synthPeaks_;
     AudioClip synthClip_ = {};
 
@@ -589,7 +594,7 @@ private:
     int analysisPeakCount_ = 0;
     int analysisPeakReadoutMode_ = 0;
     PitchEstimate analysisPitchEstimate_ = {};
-    QVariantList analysisSpectrum_;
+    QList<qreal> analysisSpectrum_;
     QVariantList analysisPeaks_;
 
     ExtractedHarmonic extractedHarmonicsBuffer_[24] = {};
@@ -648,8 +653,8 @@ private:
     double effectWorkerAmount_ = 0.0;
     bool effectWorkerSucceeded_ = false;
     bool effectSourceSpectrumWorkerSucceeded_ = false;
-    QVariantList effectOriginalSpectrum_;
-    QVariantList effectTransformedSpectrum_;
+    QList<qreal> effectOriginalSpectrum_;
+    QList<qreal> effectTransformedSpectrum_;
     double effectOriginalPeakFrequency_ = 0.0;
     double effectTransformedPeakFrequency_ = 0.0;
     bool effectSpectrumPreview_ = false;
@@ -663,7 +668,7 @@ private:
     Spectrum eqWorkerSpectrum_ = {};
     Spectrum eqOutputSpectrumBuffer_ = {};
     AudioClip eqClip_ = {};
-    QVariantList eqTransformedSpectrum_;
+    QList<qreal> eqTransformedSpectrum_;
     double eqProgress_ = 0.0;
     bool eqWorkerSucceeded_ = false;
     bool eqSpectrumPreview_ = false;

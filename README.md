@@ -94,7 +94,7 @@ All three modes retain the imported playback channel layout, run on a background
 
 | Path | Responsibility |
 | --- | --- |
-| `src/qt/` | Qt startup and the QML-facing application controller |
+| `src/qt/` | Qt startup, spectrum rendering, and the QML-facing controller. `SpectraController` keeps one QML interface; its implementation is split by workspace into `spectra_controller_<workspace>.cpp`, with shared constants and helpers in `controller_support.h` |
 | `qml/` | Canonical application shell, controls, and workspace layouts |
 | `src/audio/` | Import, playback, export, and reconstruction cache |
 | `src/dsp/` | Synthesis, FFT, pitch, peak, harmonic, and STFT processing |
@@ -105,7 +105,9 @@ Full-file spectrogram generation, FFT analysis, inverse FFT reconstruction, and 
 
 ## Processing performance
 
-Full-track spectrum analysis, tape resampling, Range EQ, frequency shifting, and independent pitch-shift channels use an auto-scaling CPU worker pool. Repeated FFT work reuses precomputed bit-reversal and twiddle tables. Overlap-add effects divide frames into non-overlapping groups before parallel execution. This produces the same output as the serial algorithm without concurrent writes to the same samples.
+Full-track spectrum analysis, tape resampling, Range EQ, frequency shifting, and pitch shifting run on a persistent CPU worker pool that starts on first use. All FFT work shares one plan type with precomputed bit-reversal and twiddle tables. Real-valued signals use a half-size complex transform, which roughly halves FFT cost. Overlap-add effects divide frames into non-overlapping groups before parallel execution. This produces the same output as the serial algorithm without concurrent writes to the same samples.
+
+Phase-vocoder pitch shifting splits each channel into fixed chunks of analysis frames. A first parallel pass measures each chunk's phase advance, a short serial scan turns those into chunk entry phases, and a second pass resynthesizes even chunks and then odd chunks. The chunk layout never depends on the worker count, so every performance mode produces identical audio. Synthesis phases are wrapped after every frame, so precision does not degrade on long files.
 
 The Settings workspace provides four persistent modes:
 
@@ -114,7 +116,7 @@ The Settings workspace provides four persistent modes:
 - **Efficient** uses about half of the detected processors.
 - **Single core** retains the serial fallback for low-memory systems and troubleshooting.
 
-Each operation limits itself to the amount of useful parallel work. For example, stereo phase-vocoder processing uses two independent channel workers even when more processors are available. Allocation or thread-creation failure also falls back to serial execution. The current backend is optimized multicore CPU code and does not require CUDA or an NVIDIA GPU.
+Each operation limits itself to the amount of useful parallel work. When two operations run at once, the second uses short-lived threads instead of waiting for the pool. Allocation or thread-creation failure also falls back to serial execution. The current backend is optimized multicore CPU code and does not require CUDA or an NVIDIA GPU.
 
 ## Windows build
 
@@ -192,11 +194,12 @@ The tag must match the version in `CMakeLists.txt`. Do not reuse a published ver
 
 ## Tests
 
-The default configuration registers five test executables:
+The default configuration registers six test executables:
 
 | Test | Coverage |
 | --- | --- |
-| `dsp_tests` | Synthesis, FFT, pitch, spectral effects, harmonic analysis, fixed FFT, STFT, channels, energy, and memory policy |
+| `dsp_tests` | Synthesis, FFT accuracy against a direct DFT, real-input FFT round trips, pitch, spectral effects, chunked phase-vocoder continuity, harmonic analysis, fixed FFT, STFT, channels, energy, and memory policy |
+| `controller_tests` | Headless controller import, QML spectrum bindings, EQ preview, and pitch-shift and EQ renders |
 | `audio_import_tests` | Unicode paths, decoding, channel preservation, and WAV export |
 | `runtime_tests` | Worker completion, cancellation, parallel scheduling, atomic cancellation, cache ownership, eviction, and channel-aware keys |
 | `spectrum_lod_tests` | Spectrum cache levels, view selection, and memory accounting |
@@ -224,7 +227,7 @@ build\Release\dsp_benchmark.exe --single
 
 ## Known limitations
 
-- Imported-file decoding and selected-region analysis run on the UI thread.
+- Selected-region analysis runs on the UI thread.
 - Spectra has no fixed duration maximum. The configurable memory ceiling governs whole-file FFT and STFT builds. Spectra displays the active model estimate before processing.
 - Fixed FFT memory grows with the zero-padded transform size and retained-bin capacity, while STFT reconstruction memory grows linearly with duration and channel count.
 - Spectral-energy selection ranks the complete one-sided FFT.

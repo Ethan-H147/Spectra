@@ -143,6 +143,7 @@ void stft_reconstruction_job_free(StftReconstructionJob *job) {
     free(job->overlap_weights);
     free(job->kept_bins);
     free(job->ranked_bins);
+    spectra_fft_plan_free(&job->fft_plan);
     sample_buffer_free(&job->output);
     spectrogram_data_free(&job->spectrogram);
     *job = (StftReconstructionJob){0};
@@ -238,6 +239,7 @@ bool stft_reconstruction_job_begin_strided(
         prepared.output.samples = (float *)calloc(source_count, sizeof(float));
     }
     if (prepared.window == NULL || prepared.real == NULL || prepared.imaginary == NULL ||
+        !spectra_fft_plan_init(&prepared.fft_plan, window_size) ||
         (top_component_count > 0 &&
          (prepared.overlap_weights == NULL || prepared.kept_bins == NULL ||
           prepared.ranked_bins == NULL || prepared.output.samples == NULL))) {
@@ -356,21 +358,10 @@ static void select_strongest_bins(StftReconstructionJob *job) {
     }
 }
 
-static void inverse_fft(float *real, float *imaginary, unsigned int size) {
-    for (unsigned int index = 0U; index < size; index++) {
-        imaginary[index] = -imaginary[index];
-    }
-    fft_radix2(real, imaginary, size);
-    for (unsigned int index = 0U; index < size; index++) {
-        real[index] /= (float)size;
-    }
-}
-
 static void process_frame(StftReconstructionJob *job, size_t frame_index) {
     size_t padding = (size_t)job->window_size / 2U;
     size_t padded_start = frame_index * (size_t)job->hop_size;
     memset(job->real, 0, (size_t)job->window_size * sizeof(float));
-    memset(job->imaginary, 0, (size_t)job->window_size * sizeof(float));
 
     for (unsigned int index = 0U; index < job->window_size; index++) {
         size_t padded_index = padded_start + (size_t)index;
@@ -382,13 +373,13 @@ static void process_frame(StftReconstructionJob *job, size_t frame_index) {
             job->window[index];
     }
 
-    fft_radix2(job->real, job->imaginary, job->window_size);
+    spectra_fft_forward_real(&job->fft_plan, job->real, job->imaginary);
     capture_spectrogram_frame(job, frame_index);
     if (job->top_component_count == 0) {
         return;
     }
     select_strongest_bins(job);
-    inverse_fft(job->real, job->imaginary, job->window_size);
+    spectra_fft_inverse_real(&job->fft_plan, job->real, job->imaginary);
 
     for (unsigned int index = 0U; index < job->window_size; index++) {
         size_t padded_index = padded_start + (size_t)index;

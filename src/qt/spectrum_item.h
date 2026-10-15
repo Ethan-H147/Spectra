@@ -4,6 +4,7 @@
 #include "qt/spectrum_lod.h"
 
 #include <QColor>
+#include <QList>
 #include <QQuickItem>
 #include <QVariantList>
 
@@ -12,7 +13,7 @@
 class SpectrumItem : public QQuickItem {
     Q_OBJECT
 
-    Q_PROPERTY(QVariantList spectrum READ spectrum WRITE setSpectrum NOTIFY spectrumChanged)
+    Q_PROPERTY(QList<qreal> spectrum READ spectrum WRITE setSpectrum NOTIFY spectrumChanged)
     Q_PROPERTY(QVariantList peaks READ peaks WRITE setPeaks NOTIFY peaksChanged)
     Q_PROPERTY(qreal spectrumMaximumFrequency READ spectrumMaximumFrequency WRITE setSpectrumMaximumFrequency NOTIFY viewChanged)
     Q_PROPERTY(qreal minimumFrequency READ minimumFrequency WRITE setMinimumFrequency NOTIFY viewChanged)
@@ -30,8 +31,8 @@ class SpectrumItem : public QQuickItem {
 public:
     explicit SpectrumItem(QQuickItem *parent = nullptr);
 
-    QVariantList spectrum() const;
-    void setSpectrum(const QVariantList &spectrum);
+    QList<qreal> spectrum() const;
+    void setSpectrum(const QList<qreal> &spectrum);
     QVariantList peaks() const;
     void setPeaks(const QVariantList &peaks);
 
@@ -84,6 +85,7 @@ private:
     QPointF pointForIndex(std::size_t index, float db) const;
     QPointF pointForFrequency(qreal frequency, qreal db) const;
 
+    QList<qreal> spectrum_;
     SpectrumLodCache cache_;
     std::vector<PeakPoint> peaks_;
     qreal spectrumMaximumFrequency_ = 1.0;

@@ -54,10 +54,9 @@ static void accumulate_spectrum_frames(
             real[index] =
                 context->samples[frame_start + (size_t)index] *
                 context->window[index];
-            imaginary[index] = 0.0f;
         }
 
-        spectra_fft_forward(context->plan, real, imaginary);
+        spectra_fft_forward_real(context->plan, real, imaginary);
         for (size_t bin = 0U;
              bin < context->bin_count;
              ++bin) {
@@ -68,66 +67,6 @@ static void accumulate_spectrum_frames(
                 (real_part * real_part +
                  imaginary_part * imaginary_part) *
                 context->power_scale;
-        }
-    }
-}
-
-static unsigned int reverse_bits(unsigned int value, unsigned int bits) {
-    unsigned int reversed = 0;
-    for (unsigned int i = 0; i < bits; i++) {
-        reversed = (reversed << 1) | (value & 1U);
-        value >>= 1;
-    }
-    return reversed;
-}
-
-void fft_radix2(float *real, float *imaginary, unsigned int size) {
-    if (real == NULL || imaginary == NULL || size == 0 || (size & (size - 1U)) != 0) {
-        return;
-    }
-
-    unsigned int bits = 0;
-    for (unsigned int n = size; n > 1; n >>= 1) {
-        bits++;
-    }
-
-    for (unsigned int i = 0; i < size; i++) {
-        unsigned int j = reverse_bits(i, bits);
-        if (j > i) {
-            float real_temp = real[i];
-            float imag_temp = imaginary[i];
-            real[i] = real[j];
-            imaginary[i] = imaginary[j];
-            real[j] = real_temp;
-            imaginary[j] = imag_temp;
-        }
-    }
-
-    for (unsigned int block_size = 2; block_size <= size; block_size <<= 1) {
-        unsigned int half_block = block_size / 2;
-        float angle_step = -2.0f * (float)M_PI / (float)block_size;
-        float step_real = cosf(angle_step);
-        float step_imaginary = sinf(angle_step);
-
-        for (unsigned int block_start = 0; block_start < size; block_start += block_size) {
-            float wr = 1.0f;
-            float wi = 0.0f;
-            for (unsigned int k = 0; k < half_block; k++) {
-                unsigned int even_index = block_start + k;
-                unsigned int odd_index = even_index + half_block;
-
-                float tr = wr * real[odd_index] - wi * imaginary[odd_index];
-                float ti = wr * imaginary[odd_index] + wi * real[odd_index];
-
-                real[odd_index] = real[even_index] - tr;
-                imaginary[odd_index] = imaginary[even_index] - ti;
-                real[even_index] += tr;
-                imaginary[even_index] += ti;
-
-                float next_wr = wr * step_real - wi * step_imaginary;
-                wi = wr * step_imaginary + wi * step_real;
-                wr = next_wr;
-            }
         }
     }
 }
@@ -149,7 +88,9 @@ Spectrum compute_magnitude_spectrum(const float *samples, size_t sample_count, u
     float *window = (float *)calloc(fft_size, sizeof(float));
     float *real = (float *)calloc(fft_size, sizeof(float));
     float *imaginary = (float *)calloc(fft_size, sizeof(float));
-    if (window == NULL || real == NULL || imaginary == NULL) {
+    SpectraFftPlan plan = {0};
+    if (window == NULL || real == NULL || imaginary == NULL ||
+        !spectra_fft_plan_init(&plan, fft_size)) {
         free(window);
         free(real);
         free(imaginary);
@@ -164,7 +105,8 @@ Spectrum compute_magnitude_spectrum(const float *samples, size_t sample_count, u
         window_sum += window[i];
     }
 
-    fft_radix2(real, imaginary, fft_size);
+    spectra_fft_forward_real(&plan, real, imaginary);
+    spectra_fft_plan_free(&plan);
 
     spectrum.count = fft_size / 2;
     spectrum.frequencies = (float *)calloc(spectrum.count, sizeof(float));

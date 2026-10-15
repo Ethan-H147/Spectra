@@ -54,23 +54,21 @@ SpectrumItem::SpectrumItem(QQuickItem *parent)
     setFlag(ItemHasContents, true);
 }
 
-QVariantList SpectrumItem::spectrum() const {
-    QVariantList result;
-    result.reserve(static_cast<qsizetype>(cache_.values().size()));
-    for (float value : cache_.values()) {
-        result.append(value);
-    }
-    return result;
+QList<qreal> SpectrumItem::spectrum() const {
+    return spectrum_;
 }
 
-void SpectrumItem::setSpectrum(const QVariantList &spectrum) {
+void SpectrumItem::setSpectrum(const QList<qreal> &spectrum) {
+    // Bindings usually hand back the controller's shared buffer, which makes
+    // an unchanged spectrum a pointer comparison.
+    if (spectrum.isSharedWith(spectrum_) || spectrum == spectrum_) {
+        return;
+    }
+    spectrum_ = spectrum;
     std::vector<float> values;
     values.reserve(static_cast<std::size_t>(spectrum.size()));
-    for (const QVariant &value : spectrum) {
-        values.push_back(value.toFloat());
-    }
-    if (values == cache_.values()) {
-        return;
+    for (qreal value : spectrum) {
+        values.push_back(static_cast<float>(value));
     }
     cache_.build(values);
     emit spectrumChanged();
